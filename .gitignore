@@ -1,0 +1,10 @@
+node_modules/
+.env
+dist/
+*.log
+
+# Generated presentation QA artifacts
+presentation_build/**/*.inspect.ndjson
+presentation_build/**/slide-*.png
+presentation_build/**/montage.webp
+presentation_build/*-montage.png

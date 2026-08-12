@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model GameSession {
+  id        String   @id @default(cuid())
+  roomCode  String   @unique
+  createdAt DateTime @default(now())
+  solved    Int      @default(0)
+}
