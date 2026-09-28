@@ -4,6 +4,8 @@
 
 ทำตามเอกสารออกแบบ `two rooms complete th.pdf` ครบทั้ง 12 ด่าน และใช้ภาพหน้าปก/ปุ่มจากโฟลเดอร์ "สำหรับ Dev"
 
+**เล่นออนไลน์:** https://kuhu-net.onrender.com
+
 ## วิธีรัน (LAN)
 
 ```bash
@@ -80,3 +82,4 @@ npm run assets    # สร้างสไปรต์ใหม่หลังท
 - [WebSocket vs HTTP](docs/websocket-vs-http.md)
 - [Network security analysis](docs/security-analysis.md)
 - [Art pipeline](art/README.md)
+- [บันทึกงาน 28 ก.ย. 2569](docs/worklog-2026-09-28.md)
