@@ -1,0 +1,60 @@
+{
+  "buttons": {
+    "start": {
+      "w": 47,
+      "h": 26,
+      "frames": 3
+    },
+    "settings": {
+      "w": 49,
+      "h": 26,
+      "frames": 3
+    },
+    "howto": {
+      "w": 48,
+      "h": 41,
+      "frames": 3
+    }
+  },
+  "background": {
+    "w": 400,
+    "h": 239
+  },
+  "characters": {
+    "frameW": 25,
+    "frameH": 53,
+    "frames": 2,
+    "chars": [
+      {
+        "id": "ping",
+        "name": "Ping",
+        "file": "/assets/chars/ping.png"
+      },
+      {
+        "id": "packet",
+        "name": "Packet",
+        "file": "/assets/chars/packet.png"
+      },
+      {
+        "id": "router",
+        "name": "Router",
+        "file": "/assets/chars/router.png"
+      },
+      {
+        "id": "switch",
+        "name": "Switch",
+        "file": "/assets/chars/switch.png"
+      },
+      {
+        "id": "cache",
+        "name": "Cache",
+        "file": "/assets/chars/cache.png"
+      },
+      {
+        "id": "byte",
+        "name": "Byte",
+        "file": "/assets/chars/byte.png"
+      }
+    ]
+  }
+}

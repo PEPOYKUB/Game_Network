@@ -1,4 +1,231 @@
 <!doctype html>
-<html lang="th"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Two Rooms, One Network</title><link rel="stylesheet" href="/styles.css"></head>
-<body><main id="app"><section id="lobby" class="screen"><div class="brand">CP422011 <span>// NETWORK LAB</span></div><div class="hero"><div class="eyebrow">CO-OP NETWORK SIMULATION</div><h1>Two Rooms,<br><em>One Link.</em></h1><p>สองคน สองห้อง หนึ่งสายสัญญาณ เดินไปหา terminal แล้วใช้คำสั่ง ping เพื่อเปิดประตู</p><div class="join-card"><label>PLAYER NAME<input id="name" maxlength="16" value="NODE_01"></label><label>ROOM CODE<input id="room" maxlength="8" value="DEMO01"></label><button id="join">ENTER THE NETWORK <span>→</span></button></div><div class="tip">WASD เดิน · E ใช้งาน terminal · ต้อง ping ให้สำเร็จทั้งสองฝั่ง<br><code>LAN: http://YOUR_IP:3000</code></div></div></section>
-<section id="game" class="screen hidden"><div id="phaser-game"></div><header class="topbar"><div class="brand">CP422011 <span>// SECURE LINK</span></div><div class="room-pill">ROOM <b id="room-label">DEMO01</b> <i id="connection">● CONNECTED</i></div></header><aside id="quest-hud"><div class="hud-kicker">MISSION STATUS</div><h3>FIND THE OTHER NODE</h3><div class="status-line"><span id="side-label">LEFT ROOM</span><b id="door-status">DOOR LOCKED</b></div><div class="status-line"><span>YOUR PING</span><b id="ping-status">NOT SENT</b></div><div class="hud-help">WASD MOVE<br>เดินไปที่ TERMINAL แล้วกด E<br>พิมพ์ <code>ping 10.0.0.2</code></div></aside><div id="toast"></div><div id="cmd-dialogue" class="cmd-dialogue hidden"><div class="cmd-top"><span><i></i><i></i><i></i> TERMINAL // NETWORK CONSOLE</span><button id="cmd-close">ESC</button></div><div class="cmd-body"><div class="cmd-title">REMOTE DIAGNOSTIC LINK</div><p>ตรวจสอบการเชื่อมต่อไปยังอีกห้องเพื่อปลดล็อกประตู</p><div class="cmd-output"><span>guest@node:~$</span> route ready<br><span>guest@node:~$</span> waiting for command...</div><form id="cmd-form"><span>guest@node:~$</span><input id="cmd-input" autocomplete="off" placeholder="ping 10.0.0.2"><button>RUN</button></form><div id="cmd-result"></div></div></div></section></main><script src="/socket.io/socket.io.js"></script><script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script><script src="/game.js"></script></body></html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KUHU NET · Two Rooms, One Network</title>
+  <meta name="description" content="เกมปริศนาเครือข่ายและ Cyber Range แบบร่วมมือกันสำหรับผู้เล่น 2 คน">
+  <link rel="icon" type="image/png" href="/assets/chars/ping.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Silkscreen:wght@400;700&family=VT323&display=swap">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <canvas id="sky" aria-hidden="true"></canvas>
+
+  <!-- 1) Cover -->
+  <section id="screen-cover" class="screen active" aria-label="หน้าปกเกม">
+    <div class="cover-stage">
+      <img class="cover-bg" src="/assets/ui/cover-bg.png" alt="KUHU NET">
+      <button class="sprite-btn btn-start" id="cover-start" aria-label="เริ่มเกม"></button>
+      <button class="sprite-btn btn-settings" id="cover-settings" aria-label="ตั้งค่า"></button>
+      <button class="sprite-btn btn-howto" id="cover-howto" aria-label="วิธีเล่น"><span class="howto-tag">HOW TO PLAY</span></button>
+      <div class="cover-foot">Two Rooms, One Network · เกมปริศนาเครือข่ายแบบร่วมมือ 2 คน</div>
+    </div>
+  </section>
+
+  <!-- 2) Loading -->
+  <section id="screen-loading" class="screen" aria-label="กำลังโหลด">
+    <div class="loading-box">
+      <div class="loading-track"><div class="loading-fill" id="loading-fill"></div><canvas id="loading-runner" width="25" height="53"></canvas></div>
+      <div class="loading-text"><span id="loading-type"></span><i class="caret">▌</i></div>
+      <div class="loading-sub" id="loading-sub">กำลังเตรียมเครือข่าย...</div>
+    </div>
+  </section>
+
+  <!-- 3) Create / join room -->
+  <section id="screen-lobby" class="screen" aria-label="เข้าร่วมห้อง">
+    <div class="panel lobby-panel">
+      <div class="panel-title pink">เข้าร่วมเครือข่าย</div>
+      <label class="field">ชื่อผู้เล่น
+        <input id="player-name" maxlength="16" autocomplete="off" placeholder="เช่น NODE_01">
+      </label>
+      <div class="lobby-grid">
+        <div class="lobby-card">
+          <h3>สร้างห้องใหม่</h3>
+          <p>ระบบจะสุ่มเลขห้อง 4 หลักให้ ส่งเลขนี้ให้เพื่อนเพื่อเข้าร่วม</p>
+          <label class="check"><input type="checkbox" id="opt-sample"> ใช้ข้อมูลตัวอย่างตามเอกสาร (ไม่สุ่มค่า)</label>
+          <label class="check"><input type="checkbox" id="opt-unlock"> ปลดล็อกทุกด่าน (โหมดสาธิต)</label>
+          <button class="btn green big" id="btn-create">สร้างห้อง</button>
+        </div>
+        <div class="lobby-card">
+          <h3>ใส่เลขห้อง</h3>
+          <p>ใส่เลขห้องที่เพื่อนสร้างไว้</p>
+          <div class="code-input" id="code-input">
+            <input inputmode="numeric" maxlength="1" aria-label="เลขตัวที่ 1"><input inputmode="numeric" maxlength="1" aria-label="เลขตัวที่ 2"><input inputmode="numeric" maxlength="1" aria-label="เลขตัวที่ 3"><input inputmode="numeric" maxlength="1" aria-label="เลขตัวที่ 4">
+          </div>
+          <button class="btn teal big" id="btn-join">เข้าร่วม</button>
+        </div>
+      </div>
+      <div class="form-msg" id="lobby-msg"></div>
+      <button class="btn ghost" id="lobby-back">← กลับหน้าปก</button>
+    </div>
+  </section>
+
+  <!-- 4) Character select -->
+  <section id="screen-room" class="screen" aria-label="เลือกตัวละคร">
+    <div class="panel room-panel">
+      <div class="panel-title teal">เลือกตัวละคร</div>
+      <div class="room-code">เลขห้อง: <b id="room-code">----</b> <button class="btn tiny" id="copy-code">คัดลอก</button></div>
+      <div class="slots">
+        <div class="slot" id="slot-A"></div>
+        <div class="slot" id="slot-B"></div>
+      </div>
+      <div class="room-actions">
+        <button class="btn ghost" id="room-leave">ออกจากห้อง</button>
+        <button class="btn yellow" id="room-swap">สลับห้อง A ↔ B</button>
+        <button class="btn green big" id="room-start" disabled>เริ่ม</button>
+      </div>
+      <div class="form-msg" id="room-msg"></div>
+    </div>
+  </section>
+
+  <!-- 5) Stage select -->
+  <section id="screen-select" class="screen" aria-label="เลือกด่าน">
+    <div class="select-layout">
+      <div class="panel select-panel">
+        <div class="panel-title yellow">เลือกด่าน <span class="title-sub" id="select-sub"></span></div>
+        <div class="stage-list" id="stage-list"></div>
+      </div>
+      <aside class="select-side">
+        <div class="panel team-panel">
+          <div class="panel-title purple">ทีมของคุณ</div>
+          <div id="team-box"></div>
+        </div>
+        <div class="panel board-panel">
+          <div class="panel-title pink">Leaderboard</div>
+          <ol class="board" id="board"></ol>
+        </div>
+        <div class="side-actions">
+          <button class="btn ghost" id="select-settings">⚙ ตั้งค่า</button>
+          <button class="btn ghost" id="select-howto">? วิธีเล่น</button>
+          <button class="btn ghost" id="select-leave">ออกจากห้อง</button>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 6) Game -->
+  <section id="screen-game" class="screen" aria-label="ภารกิจ">
+    <header class="topbar">
+      <div class="tb-stage"><span class="chip ink" id="tb-num">ด่าน 1/12</span><b id="tb-title"></b><span class="chip" id="tb-tier"></span></div>
+      <div class="tb-stats">
+        <span class="stat" title="เวลาที่ใช้ / เวลาแนะนำ">⏱ <b id="tb-timer">00:00</b><small id="tb-limit">/ 03:00</small></span>
+        <span class="stat" title="จำนวนคำสั่งที่ใช้ (ทั้งสองห้อง)">⌨ <b id="tb-cmds">0</b><small id="tb-opt"></small></span>
+        <span class="stat" title="คะแนนที่เสียจากคำใบ้">💡 <b id="tb-hints">0</b></span>
+      </div>
+      <div class="tb-right">
+        <span class="chip role" id="tb-role">ห้อง A</span>
+        <span class="chip ink" id="tb-code">#----</span>
+        <button class="icon-btn" id="tb-sound" title="เสียง">🔊</button>
+        <button class="icon-btn" id="tb-settings" title="ตั้งค่า">⚙</button>
+        <button class="btn tiny ghost" id="tb-quit">เลือกด่าน</button>
+      </div>
+    </header>
+
+    <div class="diorama-wrap" id="diorama-wrap">
+      <canvas id="diorama"></canvas>
+      <div class="dio-label left" id="dio-A"></div>
+      <div class="dio-link" id="dio-link">SYSTEM LINK A ↔ B · OFFLINE</div>
+      <div class="dio-label right" id="dio-B"></div>
+      <div class="dio-banner hidden" id="dio-banner"></div>
+    </div>
+
+    <main class="game-main">
+      <section class="panel term-panel">
+        <div class="panel-title ink">
+          <span>เทอร์มินัล · <b id="term-device">-</b></span>
+          <span class="title-actions"><button class="btn tiny ghost" id="term-help">/help</button><button class="btn tiny ghost" id="term-clear">clear</button></span>
+        </div>
+        <div class="term" id="term">
+          <div class="term-out" id="term-out" role="log" aria-live="polite"></div>
+          <div class="term-suggest" id="term-suggest"></div>
+          <div class="term-chips" id="term-chips"></div>
+          <form class="term-form" id="term-form" autocomplete="off">
+            <span class="term-prompt" id="term-prompt">&gt;</span>
+            <input id="term-input" spellcheck="false" autocapitalize="off" aria-label="พิมพ์คำสั่ง">
+          </form>
+        </div>
+      </section>
+
+      <section class="panel docs-panel">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="mission" role="tab">📋 ภารกิจ</button>
+          <button class="tab" data-tab="docs" role="tab">📁 ข้อมูลในห้อง</button>
+          <button class="tab" data-tab="report" role="tab" id="tab-report">📝 รายงาน</button>
+        </div>
+        <div class="tab-body" id="tab-mission"></div>
+        <div class="tab-body hidden" id="tab-docs"></div>
+        <div class="tab-body hidden" id="tab-report-body"></div>
+      </section>
+
+      <aside class="side-col">
+        <section class="panel chat-panel">
+          <div class="panel-title teal">แชท A ↔ B <small>(เปิดตลอดเวลา)</small></div>
+          <div class="chat-log" id="chat-log" aria-live="polite"></div>
+          <div class="quick" id="chat-quick"></div>
+          <form class="chat-form" id="chat-form" autocomplete="off">
+            <input id="chat-input" maxlength="240" placeholder="พิมพ์ข้อความถึงอีกห้อง..." aria-label="ข้อความแชท">
+            <button class="btn tiny teal">ส่ง</button>
+          </form>
+        </section>
+        <section class="panel hint-panel">
+          <div class="panel-title yellow">คำใบ้ <small>(หักคะแนนทั้งทีม)</small></div>
+          <div class="hint-buttons" id="hint-buttons"></div>
+          <div class="hint-list" id="hint-list"></div>
+        </section>
+      </aside>
+    </main>
+  </section>
+
+  <!-- Modals -->
+  <div class="modal hidden" id="modal-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="panel modal-panel">
+      <div class="panel-title pink" id="settings-title">ตั้งค่า <button class="x" data-close>✕</button></div>
+      <div class="setting-row"><span class="set-ico">🔈</span><span>เสียงเอฟเฟกต์ (Sound)</span><button class="toggle" id="set-sfx" role="switch"></button></div>
+      <div class="setting-row"><span class="set-ico">♫</span><span>เพลงประกอบ (BGM)</span><button class="toggle" id="set-bgm" role="switch"></button></div>
+      <div class="setting-row"><span class="set-ico">🎚</span><span>ความดัง</span><input type="range" id="set-volume" min="0" max="100"></div>
+      <div class="setting-row"><span class="set-ico fb">f</span><span>ช่องทางติดต่อ</span><a id="set-contact" target="_blank" rel="noopener">-</a></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modal-howto" role="dialog" aria-modal="true" aria-labelledby="howto-title">
+    <div class="panel modal-panel wide">
+      <div class="panel-title yellow" id="howto-title">วิธีเล่น · How to play <button class="x" data-close>✕</button></div>
+      <div class="howto" id="howto-body"></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modal-confirm" role="dialog" aria-modal="true">
+    <div class="panel modal-panel small">
+      <div class="panel-title purple" id="confirm-title">ยืนยัน</div>
+      <p id="confirm-text"></p>
+      <div class="modal-actions"><button class="btn ghost" id="confirm-no">ยกเลิก</button><button class="btn pink" id="confirm-yes">ตกลง</button></div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modal-clear" role="dialog" aria-modal="true" aria-labelledby="clear-title">
+    <div class="panel modal-panel clear-panel">
+      <div class="clear-banner" id="clear-title">SYSTEM LINK A ↔ B: ONLINE</div>
+      <div class="stars" id="clear-stars"></div>
+      <div class="final-code hidden" id="clear-final"></div>
+      <div class="clear-grid">
+        <table class="score-table" id="clear-score"></table>
+        <div class="explain"><h4>คำอธิบายเฉลย</h4><p id="clear-explain"></p></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="clear-stay">ดูเทอร์มินัลต่อ</button>
+        <button class="btn yellow" id="clear-select">เลือกด่าน</button>
+        <button class="btn green big" id="clear-next">ด่านถัดไป ▶</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <canvas id="confetti" aria-hidden="true"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

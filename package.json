@@ -2,18 +2,22 @@
   "name": "two-rooms-one-network",
   "version": "1.0.0",
   "private": true,
-  "description": "CP422011 Computer Networking multiplayer puzzle game",
+  "description": "KUHU NET // Two Rooms, One Network — 2-player cooperative networking puzzle & cyber range (CP422011)",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "node --watch server/index.js",
     "start": "node server/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "assets": "py tools/build_assets.py",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init"
   },
   "dependencies": {
     "@prisma/client": "^6.13.0",
     "express": "^5.1.0",
-    "phaser": "^3.90.0",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

@@ -1,35 +1,77 @@
-# Two Rooms, One Network
+# KUHU NET · Two Rooms, One Network
 
-เกม 2D cooperative networking puzzle สำหรับ CP422011: ผู้เล่นสองคนอยู่คนละห้องและสื่อสารกันผ่าน WebSocket เพื่อปลดล็อกประตูเชื่อมห้อง
+เกมปริศนาเครือข่ายและ Cyber Range แบบร่วมมือกันสำหรับผู้เล่น 2 คน (CP422011) — ผู้เล่นอยู่คนละห้อง (A / B) แต่ละห้องเห็นข้อมูลแค่ครึ่งเดียว ต้องคุยกันแล้วแก้ network state จริงผ่านเทอร์มินัลของห้องตัวเอง และพิสูจน์ผลด้วยพฤติกรรมของระบบจำลอง จนไฟ **System Link A ↔ B** เปลี่ยนเป็น ONLINE
 
-## Run บน LAN
+ทำตามเอกสารออกแบบ `two rooms complete th.pdf` ครบทั้ง 12 ด่าน และใช้ภาพหน้าปก/ปุ่มจากโฟลเดอร์ "สำหรับ Dev"
+
+## วิธีรัน (LAN)
 
 ```bash
 npm install
 npm run dev
 ```
 
-Host เปิด `http://localhost:3000` และเพื่อนเปิด `http://<HOST-LAN-IP>:3000` ใช้ room code เดียวกัน เช่น `DEMO01` เครื่องที่รัน server ต้องอนุญาต inbound TCP port 3000 ใน Windows Firewall
+- เครื่อง host เปิด `http://localhost:3000` เพื่อนในวง LAN เปิด `http://<IP ของเครื่อง host>:3000` (อนุญาต TCP 3000 ใน Windows Firewall)
+- คนหนึ่งกด **สร้างห้อง** จะได้เลขห้อง 4 หลัก อีกคนกด **ใส่เลขห้อง** → เลือกตัวละคร → กด "พร้อม!" ทั้งคู่ → เริ่ม → เลือกด่าน
+- ทดสอบคนเดียวได้โดยเปิด 2 แท็บ (แต่ละแท็บนับเป็นผู้เล่นคนละคน)
+- ตัวเลือกตอนสร้างห้อง: **ใช้ข้อมูลตัวอย่างตามเอกสาร** (ค่าตรงกับ PDF — เหมาะสำหรับสาธิต/ตรวจงาน) และ **ปลดล็อกทุกด่าน** (โหมดสาธิต)
+- ถ้ารีเฟรชหรือหลุด กด START ใหม่จะกลับเข้าห้องเดิมอัตโนมัติ ถ้าปิดแท็บไปแล้ว คนใหม่ที่ใส่เลขห้องเดิมจะเข้าแทนที่ช่องที่หลุดได้
 
-## Stack
+## ลำดับหน้าจอ (ตาม wireframe ในเอกสาร)
 
-- Client: Phaser.js dependency พร้อม UI prototype แบบ responsive (ระบบปริศนาใช้ DOM เพื่ออ่านง่ายในเดโม)
-- Server: Node.js, Express, Socket.IO, host-based room state
-- Data: Prisma schema สำหรับ PostgreSQL; ปัจจุบันใช้ in-memory session เพื่อรันเดโมได้ทันที และพร้อมต่อ persistence ด้วย `prisma migrate dev`
+1. **หน้าปก** — พื้นหลัง KUHU NET + ปุ่ม START / SETTINGS / โฟลเดอร์ HOW TO PLAY (สไปรต์ 3 เฟรมจากไฟล์ของทีมอาร์ต)
+2. **ตั้งค่า** — เสียงเอฟเฟกต์, เพลง BGM (สังเคราะห์ด้วย WebAudio), ความดัง, ช่องทางติดต่อ (แก้ `CONTACT` ใน `public/js/main.js`)
+3. **หน้าโหลด** — แถบโหลด + ตัวอักษร LOADING แบบพิมพ์ทีละตัว
+4. **สร้างห้อง / ใส่เลขห้อง** — สุ่มเลขห้อง 4 หลัก
+5. **เลือกตัวละคร** — 2 การ์ด (ห้อง A / ห้อง B), สถานะพร้อม/ไม่พร้อม, สุ่มตัวละครได้, สลับห้อง A ↔ B
+6. **เลือกด่าน** — 12 ด่าน พร้อมชื่อ รายละเอียด ภาพ และปุ่มเล่น + Leaderboard ของทีม
+7. **ในด่าน** — ฉากพิกเซลสองห้อง (ตัวละครเดินไปที่เทอร์มินัลเมื่อผู้เล่นพิมพ์คำสั่ง), เทอร์มินัลของห้องตัวเอง, แท็บภารกิจ / ข้อมูลในห้อง / รายงาน, แชท, คำใบ้ 3 ระดับ, เวลา และหน้าสรุปคะแนน
 
-## Gameplay
+## ระบบเกม (ตามเอกสารออกแบบ)
 
-ผู้เล่นเข้าห้องเดียวกัน คนแรกจะอยู่ LEFT คนที่สอง RIGHT กด READY แล้วสื่อสารคำใบ้ผ่านช่องแชต ด่าน 4 ชุดคือ subnet matching, rogue MAC, traceroute และ suspicious port เมื่อแก้ครบ ประตู network link จะเปิด
+| ระบบ | รายละเอียด |
+|---|---|
+| 12 ด่าน | IP & Subnet → Network/Broadcast → Gateway → ARP → Rogue device → VLAN → Routing → Static route → DHCP/DNS → Packet capture → ACL → Final incident (Final Code) |
+| เทอร์มินัลแยกห้อง | แต่ละห้องใช้ได้เฉพาะคำสั่งของอุปกรณ์ที่ตัวเองคุม (autocomplete แสดงเฉพาะคำสั่งที่ใช้ได้ + โฮสต์ที่รู้จัก, `/help <topic>` ไม่หักคะแนน) |
+| Verify Before Success | ผ่านด่านเมื่อพฤติกรรมของระบบจำลองถูกต้อง (ping สำเร็จ, nslookup แปลงชื่อได้, traceroute ถึงปลายทาง, พอร์ตเปิด) ไม่ใช่การเทียบสตริงคำตอบ |
+| Ground truth ฝั่งเซิร์ฟเวอร์ | คำตอบอยู่ใน `server/game/stages/*` เท่านั้น ไคลเอนต์ได้รับเฉพาะมุมมองของห้องตัวเอง |
+| สุ่มค่าทุกเซสชัน | IP / MAC / VLAN / พอร์ต / ชื่ออุปกรณ์ / เส้นทาง ถูกสุ่มใหม่ทุกครั้งที่เริ่มด่าน (เลือกใช้ข้อมูลตัวอย่างจาก PDF แทนได้) |
+| คำใบ้ 3 ระดับ | −5 / −10 / −15 เปิดตามลำดับ ทั้งสองห้องเห็นคำใบ้เดียวกัน |
+| คะแนน | 100 + โบนัสเวลา − เกินเวลา − คำใบ้ − ตั้งค่าผิด (−3/ครั้ง) + ประสิทธิภาพคำสั่ง, แสดง Service downtime |
+| Leaderboard | ทีม = คู่ A+B หนึ่งคู่ บันทึกที่ `data/leaderboard.json` |
 
-ตัวละคร 2D อยู่ที่ `public/assets/character-left.png` และ `public/assets/character-right.png` จากภาพที่ผู้ใช้ให้มา พื้นหลังสีขาวจะถูกทำให้โปร่งใสตอนโหลดเข้า Phaser และมี walk animation แบบ bob/หันซ้าย-ขวา ควบคุมด้วย `WASD` หรือปุ่มลูกศร
+## โครงสร้างโปรเจกต์
 
-## 3-room progression
+```
+server/index.js               Express + Socket.IO
+server/game/rooms.js          ห้อง, ผู้เล่น, เหตุการณ์ Socket.IO ทั้งหมด
+server/game/engine.js         run ของแต่ละด่าน: สั่งคำสั่ง, ฟอร์ม, คำใบ้, มุมมองของแต่ละห้อง
+server/game/terminal.js       รายการคำสั่ง, parser, /help, รูปแบบผลลัพธ์ (ping, ACL ...)
+server/game/stages/s01..s12   ด่านทั้ง 12: generate (สุ่ม), มุมมองห้อง A/B, handler คำสั่ง, คำใบ้, เฉลย
+server/game/scoring.js        สูตรคะแนน
+public/                       ไคลเอนต์ (ES modules ไม่ต้อง build)
+art/source/                   ไฟล์ภาพต้นฉบับจากทีมอาร์ต, art/procreate/ แปรง Procreate
+tools/build_assets.py         แปลงภาพความละเอียดสูงเป็นสไปรต์พิกเซลจริง
+test/stages.test.js           เล่นทุกด่านด้วยข้อมูลตัวอย่าง + ค่าสุ่ม 40 ชุด
+prisma/schema.prisma          โมเดลฐานข้อมูลตามหัวข้อ 8 ของเอกสาร (ทางเลือก)
+```
 
-1. `ROOM 01 // ICMP HANDSHAKE` — ทั้งสองฝั่งใช้ `ping 10.0.0.2`
-2. `ROOM 02 // ROUTING BLACKHOLE` — ทั้งสองฝั่งใช้ `traceroute 10.30.0.10` เพื่อวิเคราะห์ hop ที่หาย
-3. `ROOM 03 // DNS SERVICE DISCOVERY` — ทั้งสองฝั่งใช้ `nslookup gateway.lab`
+## Deploy ให้ทุกคนเข้าเล่นผ่านอินเทอร์เน็ต
 
-หลังคำสั่งของทั้งสองคนถูกต้อง ประตูจะเปิด ต้องเดินมาที่ Gateway กลางห้องพร้อมกัน แล้วกด `E` เพื่อย้ายไปห้องถัดไป
+เกมต้องการเซิร์ฟเวอร์ Node.js ที่รันค้างไว้และรองรับ WebSocket (ใช้ Vercel / Netlify / GitHub Pages ไม่ได้) และต้องรันแค่ 1 instance เพราะห้องเก็บในหน่วยความจำ
+
+**Render (แนะนำ):** เข้า Render → New → **Blueprint** → เลือก repo นี้ ระบบจะอ่าน `render.yaml` แล้วสร้าง Web Service ให้ (build `npm ci --omit=dev`, start `npm start`) จะได้ลิงก์ `https://<ชื่อ>.onrender.com`
+- แพ็กเกจฟรีจะหลับเมื่อไม่มีคนเข้า คนแรกต้องรอให้ตื่น และห้องที่เปิดค้างจะหาย
+- Leaderboard (`data/leaderboard.json`) จะหายเมื่อ deploy ใหม่ ถ้าต้องการเก็บถาวรให้ใช้แพ็กเกจเสียเงินแล้วเพิ่ม Persistent Disk ที่ `/opt/render/project/src/data`
+
+**วันนำเสนอแบบด่วน:** รัน `npm run dev` บนเครื่องตัวเอง แล้วรัน `cloudflared tunnel --url http://localhost:3000` จะได้ลิงก์สาธารณะชั่วคราว
+
+## คำสั่งอื่น ๆ
+
+```bash
+npm test          # ทดสอบว่าทุกด่านแก้ได้จริงและต้องยืนยันก่อนผ่าน
+npm run assets    # สร้างสไปรต์ใหม่หลังทีมอาร์ตส่งภาพ (ต้องมี Python + Pillow)
+```
 
 ## Documents
 
@@ -37,3 +79,4 @@ Host เปิด `http://localhost:3000` และเพื่อนเปิ�
 - [Sequence diagram](docs/sequence-diagram.md)
 - [WebSocket vs HTTP](docs/websocket-vs-http.md)
 - [Network security analysis](docs/security-analysis.md)
+- [Art pipeline](art/README.md)

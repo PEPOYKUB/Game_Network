@@ -1,3 +1,7 @@
+// Database model from the design document (section 8).
+// The demo server keeps the same structures in memory (server/game/engine.js: run.s / commandLog / scoreEvents)
+// and persists only the leaderboard to data/leaderboard.json, so PostgreSQL is optional.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,9 +11,97 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum RoomRole {
+  A
+  B
+}
+
+enum ScoreEventType {
+  hint_used
+  wrong_config
+  command_used
+  stage_complete
+}
+
 model GameSession {
-  id        String   @id @default(cuid())
-  roomCode  String   @unique
-  createdAt DateTime @default(now())
-  solved    Int      @default(0)
+  id            String         @id @default(cuid())
+  roomCode      String
+  teamName      String
+  createdAt     DateTime       @default(now())
+  finalCode     String?
+  stageData     StageData[]
+  networkStates NetworkState[]
+  answers       CorrectAnswer[]
+  commands      CommandLog[]
+  scoreEvents   ScoreEvent[]
+}
+
+/// What one room is allowed to see for one stage (never contains the ground truth).
+model StageData {
+  id            String      @id @default(cuid())
+  sessionId     String
+  stageId       Int
+  roomRole      RoomRole
+  visibleFields Json
+  session       GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, stageId, roomRole])
+}
+
+/// Live simulated configuration that players change with configuration commands.
+model NetworkState {
+  id         String      @id @default(cuid())
+  sessionId  String
+  stageId    Int
+  liveConfig Json
+  updatedAt  DateTime    @updatedAt
+  session    GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, stageId])
+}
+
+/// Server-side ground truth used to compute simulation results; never sent to a client.
+model CorrectAnswer {
+  id           String      @id @default(cuid())
+  sessionId    String
+  stageId      Int
+  answerFields Json
+  session      GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, stageId])
+}
+
+model CommandLog {
+  id            String      @id @default(cuid())
+  sessionId     String
+  stageId       Int
+  roomRole      RoomRole
+  commandText   String
+  resultSummary String
+  timestamp     DateTime    @default(now())
+  session       GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, stageId])
+}
+
+model Hint {
+  id           String @id @default(cuid())
+  stageId      Int
+  hintLevel    Int
+  hintText     String
+  scorePenalty Int
+
+  @@unique([stageId, hintLevel])
+}
+
+model ScoreEvent {
+  id        String         @id @default(cuid())
+  sessionId String
+  stageId   Int
+  eventType ScoreEventType
+  value     Int
+  timestamp DateTime       @default(now())
+  session   GameSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, stageId])
 }

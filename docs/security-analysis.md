@@ -10,7 +10,7 @@
 
 ## Current mitigations
 
-The server limits names and chat text, caps a room at two players, validates answers server-side, and exposes only minimal public state. A room is deleted when its last player leaves.
+The server limits names, commands and chat text, caps a room at two players, and rate-limits terminal commands (10 per 2 seconds per socket). Answers are never compared client-side: the ground truth for every stage stays on the server, each room only receives its own view, and a stage passes only when the simulated network behaves correctly. Room codes are random 4-digit numbers; an empty room is deleted 10 minutes after its last player disconnects.
 
 ## Production hardening
 

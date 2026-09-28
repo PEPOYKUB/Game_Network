@@ -1,0 +1,13 @@
+# Render Blueprint: New → Blueprint → pick this repo, and Render creates the web service from this file.
+# The game keeps rooms in memory, so run exactly one instance.
+services:
+  - type: web
+    name: kuhu-net
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

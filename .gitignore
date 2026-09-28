@@ -1,6 +1,8 @@
 node_modules/
 .env
 dist/
+# Runtime leaderboard written by the game server
+data/
 *.log
 
 # Generated presentation QA artifacts
