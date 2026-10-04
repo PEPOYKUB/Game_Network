@@ -2,7 +2,9 @@
 import { storage } from './ui.js';
 
 const store = storage('local');
-export const settings = { sfx: true, bgm: true, volume: 60, ...store.get('kuhu.settings', {}) };
+// volume = master level; each channel has its own switch and level.
+export const DEFAULTS = Object.freeze({ master: true, volume: 60, bgm: true, bgmVolume: 70, sfx: true, sfxVolume: 80 });
+export const settings = { ...DEFAULTS, ...store.get('kuhu.settings', {}) };
 
 let ctx = null;
 let master = null;
@@ -18,9 +20,9 @@ function save() {
 
 function applyVolume() {
   if (!master) return;
-  master.gain.value = (settings.volume / 100) * 0.5;
-  sfxBus.gain.value = settings.sfx ? 1 : 0;
-  bgmBus.gain.value = settings.bgm ? 0.35 : 0;
+  master.gain.value = settings.master ? (settings.volume / 100) * 0.5 : 0;
+  sfxBus.gain.value = settings.sfx ? settings.sfxVolume / 100 : 0;
+  bgmBus.gain.value = settings.bgm ? 0.35 * (settings.bgmVolume / 100) : 0;
 }
 
 /** Must be called from a user gesture (browsers block audio before that). */
@@ -114,4 +116,16 @@ export function setSetting(key, value) {
     if (value && ctx) startBgm();
     else stopBgm();
   }
+}
+
+export function resetSettings() {
+  for (const [key, value] of Object.entries(DEFAULTS)) setSetting(key, value);
+}
+
+/** A short phrase through both channels so the player can judge the levels. */
+export function testSound() {
+  unlockAudio();
+  if (!ctx) return;
+  [523, 659, 784].forEach((f, i) => tone(f, 0.12, { when: i * 0.1, vol: 0.13 }));
+  tone(262, 0.5, { type: 'triangle', vol: 0.18, when: 0.32, bus: bgmBus });
 }

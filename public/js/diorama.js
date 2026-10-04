@@ -1,321 +1,238 @@
-// Side-view pixel scene of Room A | partition | Room B, with the System Link cable between them.
 import { drawChar, frameSize } from './sprites.js';
+import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from './world.js';
 
-const H = 110;
-const FLOOR = 76;
-const C = {
-  ink: '#2a2140', wallA: '#bff3ee', stripeA: '#ade8e2', wallB: '#ffdcee', stripeB: '#ffcce4', base: '#8b7fb0',
-  plank1: '#e9c690', plank2: '#ddb57c', seam: '#b78d5b', part: '#a9b0d6', partD: '#7d84b0', wood: '#b97a45',
-  woodD: '#8a5a2e', leg: '#6e4526', screen: '#15172a', teal: '#72e6d4', green: '#7cf29a', red: '#ff5d73',
-  yellow: '#fff07a', pink: '#e2539b', white: '#ffffff', grey: '#cfcadb', rack: '#3b3552', sky: '#8fe6f3', cork: '#c58d52',
-};
-
-function rect(ctx, color, x, y, w, h) {
-  ctx.fillStyle = color;
-  ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
-}
-
-function box(ctx, fill, x, y, w, h) {
-  rect(ctx, C.ink, x, y, w, h);
-  rect(ctx, fill, x + 1, y + 1, w - 2, h - 2);
-}
+const COLORS = { A: '#3fd6a8', B: '#f27fc4' };
+const images = new Map();
+const eIcon = new Image();
+eIcon.src = '/assets/ui/key-e.png';
 
 export class Diorama {
-  constructor(canvas) {
-    this.canvas = canvas;
+  constructor(canvas, { onInput, onInteract, onPrompt, canControl, avoid } = {}) {
+    Object.assign(this, { canvas, onInput, onInteract, onPrompt, canControl, avoid });
+    this.markers = [];
     this.ctx = canvas.getContext('2d');
-    this.W = 480;
+    this.players = {};
+    this.targets = {};
+    this.chars = {};
+    this.keys = new Set();
     this.online = false;
-    this.particles = [];
-    this.packets = [];
-    this.players = { A: null, B: null };
-    this.chars = {
-      A: { x: 60, target: 60, facing: 1, walk: 0, frame: 0, nextWander: 0, bubble: null, screenUntil: 0 },
-      B: { x: 300, target: 300, facing: -1, walk: 0, frame: 0, nextWander: 0, bubble: null, screenUntil: 0 },
-    };
+    this.role = 'A';
+    this.active = false;
+    this.connected = true;
+    this.bubbles = {};
+    this.level = levelForStage(1);
+    this.loadArt();
+    this.setStage(1, 'initial');
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
     this.resize();
+    canvas.tabIndex = 0;
+    canvas.addEventListener('pointerdown', () => canvas.focus({ preventScroll: true }));
+    window.addEventListener('keydown', (e) => this.keydown(e));
+    window.addEventListener('keyup', (e) => { if (this.keys.delete(e.code)) this.sendInput(true); });
+    window.addEventListener('blur', () => this.stop());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.stop(); });
+    document.addEventListener('focusin', (e) => { if (e.target.matches('input, textarea, select, [contenteditable]')) this.stop(); });
     let last = 0;
     const loop = (t) => {
       requestAnimationFrame(loop);
-      if (t - last < 33) return;
-      const dt = last ? Math.min(0.1, (t - last) / 1000) : 0;
+      const dt = last ? Math.min(.05, (t - last) / 1000) : 0;
       last = t;
-      if (this.canvas.offsetParent === null) return;
-      this.update(dt, t / 1000);
+      if (!this.active || document.hidden || !this.canvas.offsetParent) return;
+      this.update(dt, t);
       this.draw(t / 1000);
     };
     requestAnimationFrame(loop);
   }
 
+  loadArt() {
+    for (const id of [1, 4, 7, 10]) {
+      const level = levelForStage(id);
+      if (images.has(level.file)) continue;
+      const image = new Image(); image.src = level.file; images.set(level.file, image);
+    }
+  }
+
   resize() {
-    const r = this.canvas.parentElement.getBoundingClientRect();
-    if (!r.width || !r.height) return;
-    this.W = Math.max(320, Math.round((H * r.width) / r.height));
-    this.canvas.width = this.W;
-    this.canvas.height = H;
-    const W = this.W;
-    const mid = Math.floor(W / 2);
-    const L = {
-      mid,
-      part: 7,
-      aMax: mid - 7,
-      bMin: mid + 7,
-      deskA: { x: mid - 7 - 64, w: 46 },
-      winA: { x: 16, w: 42 },
-      rackA: mid - 7 - 64 > 150 ? { x: mid - 7 - 118 } : null,
-      boardB: { x: mid + 7 + 16, w: 58 },
-      deskB: { x: mid + 7 + 92, w: 42 },
-      winB: W - (mid + 7) > 250 ? { x: W - 104, w: 42 } : null,
-      cabinetB: { x: W - 36 },
-    };
-    this.L = L;
-    const fw = frameSize().w;
-    this.spots = {
-      A: { term: L.deskA.x - fw + 4, docs: L.winA.x + 50, min: 4, max: L.aMax - fw - 2 },
-      B: { term: L.deskB.x - fw + 4, docs: L.boardB.x + L.boardB.w / 2 - fw / 2, min: L.bMin + 2, max: W - fw - 4 },
-    };
+    const box = this.canvas.parentElement.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.dpr = dpr;
+    this.canvas.width = Math.round(box.width * dpr); this.canvas.height = Math.round(box.height * dpr);
+    this.scale = Math.min(this.canvas.width / this.level.width, this.canvas.height / this.level.height);
+    this.origin = { x: (this.canvas.width - this.level.width * this.scale) / 2, y: (this.canvas.height - this.level.height * this.scale) / 2 };
+  }
+
+  setActive(active) { this.active = active; if (!active) this.stop(); else this.resize(); }
+  setPlayers(players) { this.players = players; }
+  setRole(role) { this.role = role || 'A'; }
+  setOnline(online) { this.online = online; }
+  setConnected(connected) { this.connected = connected; if (!connected) this.stop(); }
+
+  setStage(id, key) {
+    if (this.key === key) return;
+    this.stop(); this.key = key; this.stageId = id; this.level = levelForStage(id);
+    this.chars = { A: spawnPlayer(id, 'A'), B: spawnPlayer(id, 'B') }; this.targets = {}; this.received = false; this.bubbles = {};
+    this.resize();
+  }
+
+  receive(state) {
+    if (state.key !== this.key) return;
+    this.online = state.online; this.targets = state.players;
     for (const role of ['A', 'B']) {
-      const c = this.chars[role];
-      const s = this.spots[role];
-      c.x = Math.min(s.max, Math.max(s.min, role === 'A' ? s.term : s.docs));
-      c.target = c.x;
+      const p = state.players[role]; if (!p) continue;
+      if (!this.received || !this.chars[role]) this.chars[role] = { ...p };
+      const c = this.chars[role]; c.terminal = p.terminal;
+      const error = Math.hypot(c.x - p.x, c.y - p.y);
+      if (role === this.role && error > 70 || !this.received) { c.x = p.x; c.y = p.y; }
     }
+    this.received = true;
   }
 
-  setPlayers(players) {
-    this.players = players;
+  direction() { return { x: Number(this.keys.has('KeyD')) - Number(this.keys.has('KeyA')), y: Number(this.keys.has('KeyS')) - Number(this.keys.has('KeyW')) }; }
+  stop() { this.keys.clear(); this.sendInput(true); }
+  sendInput(force = false) {
+    if (!this.active || !this.connected) return;
+    const dir = this.direction(), held = Boolean(dir.x || dir.y);
+    // Idle players stay silent; a held key repeats every 80 ms, a release sends one stop.
+    if (!force && !held) return;
+    if (!force && performance.now() - (this.sentAt || 0) <= 80) return;
+    if (force && !held && !this.sentHeld) return;
+    this.sentAt = performance.now(); this.sentHeld = held;
+    this.onInput?.({ ...dir, key: this.key });
   }
 
-  setOnline(online) {
-    if (online && !this.online) this.celebrate();
-    this.online = online;
-    if (!online) this.packets = [];
+  keydown(e) {
+    if (!this.active || !this.connected || e.ctrlKey || e.altKey || e.metaKey || !this.canControl?.() || e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) { e.preventDefault(); this.keys.add(e.code); this.sendInput(true); }
+    else if (e.code === 'KeyE' && !e.repeat) { e.preventDefault(); this.stop(); this.onInteract?.(Boolean(nearbyComputer(this.level, this.role, this.chars[this.role]))); }
   }
 
-  activity(role, kind) {
-    const c = this.chars[role];
-    const s = this.spots?.[role];
-    if (!c || !s) return;
-    if (kind === 'exec' || kind === 'config' || kind === 'form' || kind === 'typing') {
-      c.target = s.term;
-      c.screenUntil = performance.now() / 1000 + 1.4;
-    } else if (kind === 'docs') {
-      c.target = s.docs;
-    }
-    if (kind === 'config') c.bubble = { kind: 'bang', until: performance.now() / 1000 + 1.8 };
-    c.nextWander = performance.now() / 1000 + 10;
-  }
-
-  say(role) {
-    const c = this.chars[role];
-    if (c) c.bubble = { kind: 'talk', until: performance.now() / 1000 + 2.6 };
-  }
-
-  celebrate() {
-    if (!this.L) return;
-    const colors = [C.pink, C.yellow, C.teal, C.green, '#8f4bc9', C.white];
-    for (let i = 0; i < 90; i += 1) {
-      this.particles.push({
-        x: this.L.mid + (Math.random() - 0.5) * 20,
-        y: 44,
-        vx: (Math.random() - 0.5) * 180,
-        vy: -60 - Math.random() * 90,
-        c: colors[i % colors.length],
-        life: 2 + Math.random(),
-      });
-    }
-  }
-
+  activity(role, kind) { this.bubbles[role] = { kind, until: performance.now() + 1700 }; }
+  say(role) { this.activity(role, 'chat'); }
   update(dt, now) {
-    if (!this.L) return;
+    this.sendInput();
+    const local = this.chars[this.role];
+    if (local && this.received && this.connected && !local.terminal) {
+      const input = this.direction();
+      if (input.x || input.y) this.chars[this.role] = movePlayer(this.level, this.role, local, input, dt, this.online);
+    }
     for (const role of ['A', 'B']) {
-      const c = this.chars[role];
-      const s = this.spots[role];
-      if (!this.players[role]) continue;
-      if (now > c.nextWander && Math.abs(c.x - c.target) < 1) {
-        c.target = Math.random() < 0.55 ? (Math.random() < 0.5 ? s.term : s.docs) : s.min + Math.random() * (s.max - s.min);
-        c.nextWander = now + 6 + Math.random() * 8;
-      }
-      c.target = Math.min(s.max, Math.max(s.min, c.target));
-      const dx = c.target - c.x;
-      if (Math.abs(dx) > 0.6) {
-        c.facing = dx > 0 ? 1 : -1;
-        c.x += Math.sign(dx) * Math.min(Math.abs(dx), 30 * dt);
-        c.walk += dt;
-        c.frame = Math.floor(c.walk / 0.16) % 2;
-      } else {
-        c.frame = 0;
-        c.walk = 0;
-        if (Math.abs(c.x - s.term) < 2) c.facing = 1;
-        if (Math.abs(c.x - s.docs) < 2) c.facing = role === 'A' ? -1 : 1;
-      }
+      const target = this.targets?.[role]; const c = this.chars[role]; if (!target || !c) continue;
+      // Predict the controlled character without pulling it toward an older packet
+      // every frame. Remote characters still interpolate network snapshots.
+      if (role === this.role && (this.direction().x || this.direction().y)) continue;
+      const factor = Math.min(1, dt * 15); c.x += (target.x - c.x) * factor; c.y += (target.y - c.y) * factor; c.facing = target.facing; c.moving = target.moving; c.terminal = target.terminal;
     }
-    if (this.online && Math.random() < dt * 3) {
-      this.packets.push({ t: 0, dir: Math.random() < 0.5 ? 1 : -1, c: Math.random() < 0.5 ? C.yellow : C.white });
-    }
-    this.packets = this.packets.filter((p) => (p.t += dt * 0.45) < 1);
-    this.particles = this.particles.filter((p) => {
-      p.vy += 160 * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.life -= dt;
-      return p.life > 0 && p.y < H + 4;
-    });
+    const near = Boolean(nearbyComputer(this.level, this.role, this.chars[this.role]));
+    const prompt = !this.connected ? 'กำลังเชื่อมต่อกลับ…' : local?.terminal ? 'Terminal เปิดอยู่ · Esc กลับไปเดิน' : near ? 'กด E เพื่อเปิด Terminal' : 'เดินไปที่คอมพิวเตอร์ที่มีสัญลักษณ์ E';
+    if (prompt !== this.prompt) { this.prompt = prompt; this.onPrompt?.(prompt, near); }
   }
 
   draw(now) {
-    const { ctx, W, L } = this;
-    if (!L) return;
-    // Walls
-    rect(ctx, C.wallA, 0, 0, L.aMax, FLOOR);
-    rect(ctx, C.wallB, L.bMin, 0, W - L.bMin, FLOOR);
-    for (let x = 4; x < L.aMax; x += 10) rect(ctx, C.stripeA, x, 0, 3, FLOOR);
-    for (let x = L.bMin + 4; x < W; x += 10) rect(ctx, C.stripeB, x, 0, 3, FLOOR);
-    rect(ctx, C.base, 0, FLOOR - 3, W, 3);
-    // Floor planks
-    for (let row = 0; FLOOR + row * 9 < H; row += 1) {
-      const y = FLOOR + row * 9;
-      rect(ctx, row % 2 ? C.plank1 : C.plank2, 0, y, W, 9);
-      rect(ctx, C.seam, 0, y, W, 1);
-      for (let x = (row % 2) * 18; x < W; x += 36) rect(ctx, C.seam, x, y, 1, 9);
-    }
-    this.drawWindow(L.winA.x, L.winA.w, now);
-    if (L.winB) this.drawWindow(L.winB.x, L.winB.w, now + 3);
-    if (L.rackA) this.drawRack(L.rackA.x, now);
-    this.drawCorkboard(L.boardB.x, L.boardB.w);
-    this.drawCabinet(L.cabinetB.x);
-    this.drawPlant(L.aMax - 12);
-    // Partition with the System Link jack
-    rect(ctx, C.partD, L.mid - L.part, 0, L.part * 2, H);
-    rect(ctx, C.part, L.mid - L.part + 2, 0, L.part * 2 - 4, H);
-    box(ctx, C.screen, L.mid - 5, 44, 10, 14);
-    const blink = Math.floor(now * 2) % 2 === 0;
-    rect(ctx, this.online ? C.green : blink ? C.red : '#7a2c3a', L.mid - 2, 47, 4, 4);
-    rect(ctx, C.grey, L.mid - 3, 53, 6, 3);
-    // Cable along the floor: desk A → partition → desk B
-    const cableY = H - 7;
-    const ax = L.deskA.x + 30;
-    const bx = L.deskB.x + 14;
-    rect(ctx, C.ink, ax, FLOOR + 6, 2, cableY - FLOOR - 6);
-    rect(ctx, C.ink, bx, FLOOR + 6, 2, cableY - FLOOR - 6);
-    rect(ctx, this.online ? C.green : C.ink, ax, cableY, bx - ax + 2, 2);
-    rect(ctx, C.ink, L.mid - 1, 58, 2, cableY - 58);
-    for (const p of this.packets) {
-      const x = p.dir > 0 ? ax + (bx - ax) * p.t : bx - (bx - ax) * p.t;
-      rect(ctx, p.c, x - 1, cableY - 1, 3, 4);
-    }
-    this.drawDeskA(L.deskA.x, now);
-    this.drawDeskB(L.deskB.x, now);
-    // Characters
-    const { h: fh } = frameSize();
-    for (const role of ['A', 'B']) {
-      const p = this.players[role];
-      if (!p) continue;
-      const c = this.chars[role];
-      const bob = c.walk === 0 && Math.floor(now * 1.6 + (role === 'B' ? 0.5 : 0)) % 2 === 0 ? 1 : 0;
-      ctx.globalAlpha = p.connected === false ? 0.35 : 1;
-      drawChar(ctx, p.charId, c.frame, c.x, H - 5 - fh + bob, c.facing < 0);
-      ctx.globalAlpha = 1;
-      if (c.bubble && now < c.bubble.until) this.drawBubble(c.x + 14, H - 5 - fh - 4, c.bubble.kind, now);
-    }
-    for (const p of this.particles) rect(ctx, p.c, p.x, p.y, 2, 2);
-  }
+    const { ctx, level, scale, origin } = this; if (!origin) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.setTransform(scale, 0, 0, scale, origin.x, origin.y);
+    const image = images.get(level.file);
+    // The artwork is usually drawn smaller than its source size; smooth it to avoid
+    // nearest-neighbour shimmer, but keep the upscaled sprites crisp.
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    if (image?.complete && image.naturalWidth) ctx.drawImage(image, 0, 0, level.width, level.height);
+    else { ctx.fillStyle = '#e8ddfb'; ctx.fillRect(0, 0, level.width, level.height); this.text('กำลังโหลดห้อง…', level.width / 2, level.height / 2, '#4b3f78', 18); }
 
-  drawWindow(x, w, now) {
-    const { ctx } = this;
-    box(ctx, C.white, x, 10, w, 32);
-    rect(ctx, C.sky, x + 3, 13, w - 6, 26);
-    const cx = x + 3 + ((now * 3) % (w + 10)) - 10;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x + 3, 13, w - 6, 26);
-    ctx.clip();
-    rect(ctx, C.white, cx, 20, 12, 4);
-    rect(ctx, C.white, cx + 3, 17, 6, 3);
-    ctx.restore();
-    rect(ctx, C.white, x + w / 2 - 1, 13, 2, 26);
-    rect(ctx, C.ink, x - 2, 41, w + 4, 3);
-  }
-
-  drawRack(x, now) {
-    const { ctx } = this;
-    box(ctx, C.rack, x, 28, 22, FLOOR + 14 - 28);
-    for (let i = 0; i < 6; i += 1) {
-      rect(ctx, '#4d4668', x + 3, 32 + i * 8, 16, 5);
-      const on = (Math.floor(now * 3 + i * 1.7) % 3) !== 0;
-      rect(ctx, on ? (i % 2 ? C.green : C.yellow) : '#2a2140', x + 15, 33 + i * 8, 2, 2);
-    }
-  }
-
-  drawCorkboard(x, w) {
-    const { ctx } = this;
-    box(ctx, C.cork, x, 12, w, 34);
-    rect(ctx, C.white, x + 5, 16, 14, 16);
-    rect(ctx, C.yellow, x + 24, 18, 12, 11);
-    rect(ctx, '#ffd6ea', x + 40, 16, 13, 14);
-    rect(ctx, C.white, x + 20, 32, 16, 10);
-    for (const [px, py] of [[x + 11, 16], [x + 29, 18], [x + 46, 16], [x + 27, 32]]) rect(ctx, C.red, px, py, 2, 2);
-    ctx.fillStyle = C.red;
-    for (let i = 0; i <= 17; i += 1) ctx.fillRect(Math.round(x + 12 + i), Math.round(17 + i * 0.1), 1, 1);
-    for (let i = 0; i <= 16; i += 1) ctx.fillRect(Math.round(x + 30 + i), Math.round(19 - i * 0.18), 1, 1);
-    for (const [lx, ly] of [[x + 7, 21], [x + 7, 24], [x + 7, 27], [x + 22, 36], [x + 22, 39]]) rect(ctx, '#b9b3c9', lx, ly, 10, 1);
-  }
-
-  drawCabinet(x) {
-    const { ctx } = this;
-    box(ctx, '#9aa3c7', x, 42, 28, FLOOR + 16 - 42);
-    for (let i = 0; i < 3; i += 1) {
-      rect(ctx, '#7d84b0', x + 3, 46 + i * 15, 22, 1);
-      rect(ctx, C.ink, x + 11, 51 + i * 15, 6, 2);
-    }
-  }
-
-  drawPlant(x) {
-    const { ctx } = this;
-    rect(ctx, '#5a9e45', x - 4, 52, 3, 10);
-    rect(ctx, '#88e56b', x + 1, 48, 3, 14);
-    rect(ctx, '#5a9e45', x + 5, 54, 3, 8);
-    box(ctx, C.pink, x - 5, 62, 14, 12);
-  }
-
-  drawDeskA(x, now) {
-    const { ctx } = this;
-    const busy = now < this.chars.A.screenUntil;
-    rect(ctx, C.leg, x + 3, FLOOR - 2, 3, 20);
-    rect(ctx, C.leg, x + 40, FLOOR - 2, 3, 20);
-    box(ctx, C.wood, x, FLOOR - 6, 46, 6);
-    box(ctx, '#e8e4f0', x + 8, FLOOR - 26, 26, 20);
-    rect(ctx, C.screen, x + 11, FLOOR - 23, 20, 13);
-    const lines = busy ? 4 : 2;
-    for (let i = 0; i < lines; i += 1) rect(ctx, busy && i === lines - 1 ? C.green : C.teal, x + 13, FLOOR - 21 + i * 3, 6 + ((i * 7 + Math.floor(now * (busy ? 8 : 1))) % 10), 1);
-    rect(ctx, '#b9b3c9', x + 18, FLOOR - 7, 6, 1);
-    box(ctx, C.grey, x + 30, FLOOR - 9, 14, 3);
-  }
-
-  drawDeskB(x, now) {
-    const { ctx } = this;
-    const busy = now < this.chars.B.screenUntil;
-    rect(ctx, C.leg, x + 3, FLOOR - 2, 3, 20);
-    rect(ctx, C.leg, x + 36, FLOOR - 2, 3, 20);
-    box(ctx, C.wood, x, FLOOR - 6, 42, 6);
-    box(ctx, C.grey, x + 6, FLOOR - 9, 22, 3);
-    box(ctx, C.screen, x + 8, FLOOR - 22, 18, 13);
-    for (let i = 0; i < (busy ? 3 : 1); i += 1) rect(ctx, C.pink, x + 10, FLOOR - 20 + i * 3, 5 + ((i * 5 + Math.floor(now * 6)) % 8), 1);
-    rect(ctx, C.white, x + 30, FLOOR - 10, 9, 4);
-    rect(ctx, C.yellow, x + 31, FLOOR - 13, 8, 3);
-  }
-
-  drawBubble(x, y, kind, now) {
-    const { ctx } = this;
-    box(ctx, C.white, x - 8, y - 11, 17, 10);
-    rect(ctx, C.ink, x - 1, y - 2, 3, 2);
-    if (kind === 'bang') {
-      rect(ctx, C.pink, x, y - 9, 1, 4);
-      rect(ctx, C.pink, x, y - 4, 1, 1);
+    // Door between the rooms: barred while the stage link is offline.
+    const [a, b] = level.split, [top, bottom] = level.passage;
+    if (!this.online) {
+      ctx.fillStyle = 'rgba(255, 120, 150, .16)'; ctx.fillRect(a, top, b - a, bottom - top);
+      for (const x of [a + 3, b - 3]) {
+        ctx.fillStyle = '#ff7a9a'; ctx.fillRect(x - 2, top, 4, bottom - top);
+        for (let y = top + 6; y < bottom - 2; y += 12) { ctx.fillStyle = '#ffd0dc'; ctx.fillRect(x - 6, y, 12, 4); }
+      }
+      this.lock((a + b) / 2, (top + bottom) / 2);
     } else {
-      const n = 1 + (Math.floor(now * 3) % 3);
-      for (let i = 0; i < n; i += 1) rect(ctx, C.ink, x - 4 + i * 4, y - 6, 2, 2);
+      ctx.fillStyle = 'rgba(110, 235, 190, .18)'; ctx.fillRect(a, top, b - a, bottom - top);
     }
+
+    const me = this.chars[this.role];
+    const near = nearbyComputer(level, this.role, me);
+    const stations = level.stations[this.role] || [];
+    const blocked = this.blockedAreas();
+    this.markers = [];
+    for (const station of stations) {
+      const { x, y } = station.screen; const active = station === near;
+      const glow = ctx.createRadialGradient(x, y, 3, x, y, active ? 70 : 50);
+      glow.addColorStop(0, `${COLORS[this.role]}${active ? '66' : '33'}`); glow.addColorStop(1, `${COLORS[this.role]}00`); ctx.fillStyle = glow; ctx.fillRect(x - 70, y - 70, 140, 140);
+      // Floor spot: where to stand to use this computer.
+      const pulse = (Math.sin(now * 3) + 1) / 2;
+      ctx.save(); ctx.setLineDash([6, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = `${COLORS[this.role]}${active ? 'ff' : 'cc'}`;
+      ctx.fillStyle = `${COLORS[this.role]}${active ? '40' : '22'}`;
+      ctx.beginPath(); ctx.ellipse(station.x, station.y, 24 + pulse * 5, 9 + pulse * 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
+      const size = active ? 50 : 40, bob = Math.sin(now * (active ? 6 : 2.4)) * 2.5;
+      const spot = this.markerSpot(station, size, blocked);
+      if (eIcon.complete && eIcon.naturalWidth) ctx.drawImage(eIcon, spot.x - size / 2, spot.y + bob - size / 2, size, size);
+      else this.text('E', spot.x, spot.y + bob + 5, '#2d2a4a', 17, true);
+      this.markers.push(this.toCss(spot.x - size / 2, spot.y - size / 2, size, size));
+    }
+    // Direction arrow at the player's feet toward the nearest own computer.
+    if (me && !near && !me.terminal && stations.length) {
+      const target = stations.reduce((a, b) => (Math.hypot(b.x - me.x, b.y - me.y) < Math.hypot(a.x - me.x, a.y - me.y) ? b : a));
+      const ang = Math.atan2(target.y - me.y, target.x - me.x), r = 40 + Math.sin(now * 5) * 3;
+      ctx.save(); ctx.translate(me.x + Math.cos(ang) * r, me.y + 1 + Math.sin(ang) * r * .45); ctx.rotate(ang);
+      ctx.fillStyle = COLORS[this.role]; ctx.strokeStyle = '#2d2a4a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-6, -8); ctx.lineTo(-2, 0); ctx.lineTo(-6, 8); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+
+    ctx.imageSmoothingEnabled = false;
+    for (const role of ['A', 'B'].sort((x, y) => (this.chars[x]?.y || 0) - (this.chars[y]?.y || 0))) {
+      if (!this.players[role] || role !== this.role && !this.targets?.[role]) continue;
+      const c = this.chars[role], p = this.players[role], { w, h } = frameSize(); ctx.save(); ctx.globalAlpha = p.connected === false ? .45 : 1;
+      ctx.fillStyle = 'rgba(60, 40, 110, .22)'; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 22, 8, 0, 0, Math.PI * 2); ctx.fill();
+      if (role === this.role) { ctx.strokeStyle = COLORS[role]; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 26, 10, 0, 0, Math.PI * 2); ctx.stroke(); }
+      // Sprites follow the mockup scale (about 1/6 of the room height); collision stays at the feet.
+      const size = 2; ctx.translate(Math.round(c.x - w * size / 2), Math.round(c.y - h * size + 4)); ctx.scale(size, size); drawChar(ctx, p.charId, c.moving ? Math.floor(now * 7) % 2 : 0, 0, 0, c.facing < 0); ctx.restore();
+      this.text(role === this.role ? `คุณ · ${p.name}` : `เพื่อน · ${p.name}`, c.x, c.y + 26, role === 'A' ? '#16806a' : '#b0367d', 12, true);
+      if (c.terminal || this.bubbles[role]?.until > performance.now()) this.text(c.terminal ? '>_' : '···', c.x, c.y - h * size - 4, '#4b3f78', 15, true);
+    }
+  }
+
+  // HUD cards over the canvas, converted to world units, so markers can avoid them.
+  blockedAreas() {
+    const rects = this.avoid?.() || [];
+    if (!rects.length || !this.origin) return [];
+    const box = this.canvas.getBoundingClientRect(), d = this.dpr || 1, pad = 6;
+    return rects.map((r) => ({
+      l: ((r.left - box.left - pad) * d - this.origin.x) / this.scale, t: ((r.top - box.top - pad) * d - this.origin.y) / this.scale,
+      r: ((r.right - box.left + pad) * d - this.origin.x) / this.scale, b: ((r.bottom - box.top + pad) * d - this.origin.y) / this.scale,
+    }));
+  }
+
+  // Above the screen when visible; otherwise beside it, then above the floor spot.
+  markerSpot(station, size, blocked) {
+    const { x, y } = station.screen, h = size / 2, L = this.level;
+    const candidates = [
+      { x, y: y - 34 - h }, { x: x + 46 + h, y }, { x: x - 46 - h, y }, { x, y: station.y - 70 - h }, { x, y: y + 30 + h },
+    ];
+    const free = (c) => c.x - h >= 0 && c.x + h <= L.width && c.y - h >= 0 && c.y + h <= L.height
+      && !blocked.some((r) => c.x + h > r.l && c.x - h < r.r && c.y + h > r.t && c.y - h < r.b);
+    return candidates.find(free) || candidates[0];
+  }
+
+  toCss(x, y, w, h) {
+    const box = this.canvas.getBoundingClientRect(), d = this.dpr || 1;
+    const px = (v, o) => (o + v * this.scale) / d;
+    return { left: box.left + px(x, this.origin.x), top: box.top + px(y, this.origin.y), width: w * this.scale / d, height: h * this.scale / d };
+  }
+
+  lock(x, y) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#fffaf0'; ctx.strokeStyle = '#ff6f8e'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(x - 15, y - 13, 30, 28, 6); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y - 13, 8, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = '#ff6f8e'; ctx.fillRect(x - 2, y - 2, 4, 8);
+  }
+
+  text(text, x, y, color, size, background = false) {
+    const ctx = this.ctx; ctx.font = `600 ${size}px Prompt, "Chakra Petch", Tahoma, sans-serif`; ctx.textAlign = 'center';
+    if (background) { const w = ctx.measureText(text).width + 12; ctx.fillStyle = 'rgba(255, 253, 247, .92)'; ctx.strokeStyle = 'rgba(120, 100, 190, .45)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(x - w / 2, y - size - 1, w, size + 7, 5); ctx.fill(); ctx.stroke(); }
+    ctx.fillStyle = color; ctx.fillText(text, x, y);
   }
 }

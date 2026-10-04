@@ -73,29 +73,40 @@ export function renderDocs(target, view) {
   target.replaceChildren(...(docs.length ? docs.map(renderDoc) : [el('div', { class: 'empty-note' }, 'ห้องนี้ไม่มีเอกสาร — ข้อมูลของคุณอยู่ในผลลัพธ์ของเทอร์มินัล')]));
 }
 
-export function renderMission(target, run, view, you) {
+export function renderMission(target, run, view, you, { portrait, checks, checkKey, onToggle } = {}) {
   const m = run.meta;
   const other = you === 'A' ? 'B' : 'A';
+  const todo = view.do.map((text, i) => {
+    const key = `${checkKey}:${i}`;
+    const done = checks?.has(key);
+    return el('li', {},
+      el('button', {
+        type: 'button', class: `todo ${done ? 'done' : ''}`, 'aria-pressed': String(Boolean(done)),
+        onclick: () => { if (!checks) return; if (done) checks.delete(key); else checks.add(key); onToggle?.(); },
+      }, el('span', { class: 'box', 'aria-hidden': 'true' }), el('span', {}, text)));
+  });
+  const commands = view.commands.length
+    ? el('pre', { class: 'cmd-box' }, view.commands.map((c) => c.usage).join('\n'))
+    : el('p', { class: 'cmd-none' }, 'ห้องนี้ไม่มีอุปกรณ์ให้สั่งงาน — เปิดแท็บ "ข้อมูลในห้อง" แล้วบอกค่าที่ต้องใช้ให้เพื่อน');
+  const wasOpen = Boolean(target.querySelector('.mission-more')?.open);
   target.replaceChildren(
-    el(
-      'div',
-      { class: 'mission' },
-      el('h3', {}, `ด่าน ${m.id} – ${m.title}`),
-      el(
-        'div',
-        { class: 'chips' },
-        el('span', { class: `chip tier-${m.tier}` }, m.tier),
-        el('span', { class: 'chip' }, `ความยาก ${m.id}/12 · ${m.difficulty}`),
-        el('span', { class: 'chip' }, `⏱ แนะนำ ${m.minutes} นาที`),
-        el('span', { class: 'chip' }, `⌨ ~${m.optimal} ขั้นตอน`),
-      ),
-      el('p', {}, el('b', {}, 'สถานการณ์: '), m.story),
-      el('p', {}, el('b', {}, 'หัวข้อเครือข่าย: '), m.topic),
-      el('p', {}, el('b', {}, 'เป้าหมายการเรียนรู้: '), m.objective),
-      el('div', { class: 'box you' }, el('h4', {}, `ห้องของคุณ (ห้อง ${you}) มีข้อมูล`), el('ul', {}, view.see.map((s) => el('li', {}, s))), el('h4', {}, 'สิ่งที่ต้องทำ'), el('ol', {}, view.do.map((s) => el('li', {}, s)))),
-      el('div', { class: 'box' }, el('h4', {}, 'กลไกความร่วมมือ'), el('p', {}, m.coop), el('p', {}, `ห้อง ${other} เห็นข้อมูลอีกครึ่งหนึ่ง — ถามกันให้ครบก่อนลงมือตั้งค่า`)),
-      el('div', { class: 'box' }, el('h4', {}, 'ผ่านด่านเมื่อไร?'), el('p', {}, 'ต้องแก้ network state ด้วยคำสั่งจริง แล้วรันคำสั่งตรวจสอบ (ping / ipconfig / traceroute ฯลฯ) ให้พฤติกรรมของระบบถูกต้อง — System Link A ↔ B จะเปลี่ยนเป็น ONLINE')),
-    ),
+    el('div', { class: 'mission' },
+      el('div', { class: 'mission-main' },
+        el('div', { class: 'mission-kicker' }, `ด่าน ${String(m.id).padStart(2, '0')} / 12 · ${m.tier}`),
+        el('h3', {}, m.title),
+        el('p', { class: 'mission-sub' }, m.topic),
+        el('h4', {}, 'สิ่งที่ต้องทำ'),
+        el('ol', { class: 'todo-list' }, todo),
+        el('details', { class: 'mission-more', open: wasOpen },
+          el('summary', {}, 'สถานการณ์และการทำงานร่วมกัน'),
+          el('p', {}, m.story),
+          el('p', {}, el('b', {}, 'กลไกความร่วมมือ: '), m.coop, ` ห้อง ${other} เห็นข้อมูลอีกครึ่งหนึ่ง — ถามกันให้ครบก่อนลงมือตั้งค่า`),
+          el('p', {}, el('b', {}, 'ผ่านด่านเมื่อไร: '), 'แก้ network state ด้วยคำสั่งจริง แล้วรันคำสั่งตรวจสอบให้ระบบทำงานถูกต้อง ประตูระหว่างห้องจะเปิด'))),
+      el('aside', { class: 'role-card' },
+        el('div', { class: 'role-head' }, el('div', { class: 'role-portrait' }, portrait), el('b', {}, `บทบาทของคุณ · ห้อง ${you}`)),
+        el('ul', { class: 'role-see' }, view.see.map((s) => el('li', {}, s))),
+        el('h4', {}, 'คำสั่งที่ใช้'),
+        commands)),
   );
 }
 
