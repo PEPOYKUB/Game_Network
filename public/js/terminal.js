@@ -53,7 +53,7 @@ export class Terminal {
     ]);
     if (!v.commands.length) {
       this.write([
-        { t: 'ในด่านนี้ห้องของคุณถือ "ข้อมูล" ไม่ใช่อุปกรณ์ — เปิดแท็บ 📁 ข้อมูลในห้อง', c: 'sys' },
+        { t: 'ในด่านนี้ห้องของคุณถือ "ข้อมูล" ไม่ใช่อุปกรณ์ — เปิดปุ่ม ภารกิจ → ข้อมูลในห้อง', c: 'sys' },
         { t: 'แล้วบอกค่าที่อีกห้องต้องใช้ผ่านแชทหรือพูดคุยกัน (/help ยังใช้ได้)', c: 'sys' },
       ]);
     } else {
@@ -157,7 +157,8 @@ export class Terminal {
       if (open) return this.move(1);
       this.hIndex = Math.max(-1, this.hIndex - 1);
       this.input.value = this.hIndex < 0 ? '' : this.history[this.hIndex];
-    } else if (e.key === 'Escape') {
+    } else if (e.key === 'Escape' && this.suggestEl.classList.contains('show')) {
+      e.stopPropagation(); // first Esc closes suggestions; the next one leaves the terminal
       this.hideSuggest();
     }
     return undefined;

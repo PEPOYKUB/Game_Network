@@ -8,14 +8,13 @@
   <link rel="icon" type="image/png" href="/assets/chars/ping.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Silkscreen:wght@400;700&family=VT323&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Prompt:wght@400;500;600;700&family=Silkscreen:wght@400;700&family=VT323&display=swap">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <canvas id="sky" aria-hidden="true"></canvas>
-
   <!-- 1) Cover -->
   <section id="screen-cover" class="screen active" aria-label="หน้าปกเกม">
+    <canvas id="sky" aria-hidden="true"></canvas>
     <div class="cover-stage">
       <img class="cover-bg" src="/assets/ui/cover-bg.png" alt="KUHU NET">
       <button class="sprite-btn btn-start" id="cover-start" aria-label="เริ่มเกม"></button>
@@ -108,85 +107,249 @@
 
   <!-- 6) Game -->
   <section id="screen-game" class="screen" aria-label="ภารกิจ">
-    <header class="topbar">
-      <div class="tb-stage"><span class="chip ink" id="tb-num">ด่าน 1/12</span><b id="tb-title"></b><span class="chip" id="tb-tier"></span></div>
-      <div class="tb-stats">
-        <span class="stat" title="เวลาที่ใช้ / เวลาแนะนำ">⏱ <b id="tb-timer">00:00</b><small id="tb-limit">/ 03:00</small></span>
-        <span class="stat" title="จำนวนคำสั่งที่ใช้ (ทั้งสองห้อง)">⌨ <b id="tb-cmds">0</b><small id="tb-opt"></small></span>
-        <span class="stat" title="คะแนนที่เสียจากคำใบ้">💡 <b id="tb-hints">0</b></span>
-      </div>
-      <div class="tb-right">
-        <span class="chip role" id="tb-role">ห้อง A</span>
-        <span class="chip ink" id="tb-code">#----</span>
-        <button class="icon-btn" id="tb-sound" title="เสียง">🔊</button>
-        <button class="icon-btn" id="tb-settings" title="ตั้งค่า">⚙</button>
-        <button class="btn tiny ghost" id="tb-quit">เลือกด่าน</button>
-      </div>
-    </header>
+    <div class="game-backdrop" aria-hidden="true"></div>
+    <div class="game-layout">
+      <!-- Map: the main play area. Terminal and sheets float over it. -->
+      <div class="map-col">
+        <div class="diorama-wrap" id="diorama-wrap">
+          <canvas id="diorama" aria-label="แผนที่ห้อง ใช้ W A S D เดิน และ E ใช้คอมพิวเตอร์"></canvas>
+          <div class="hud-stage glass-card">
+            <button class="hud-icon" id="tb-quit" title="กลับไปเลือกด่าน" aria-label="กลับไปเลือกด่าน"><img src="/assets/ui/back.png" alt=""></button>
+            <span class="stage-badge" id="tb-num">01/12</span>
+            <b class="hud-title" id="tb-title"></b>
+          </div>
+          <div class="hud-keys glass-card">
+            <span class="keycaps"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span> เดิน
+            <span class="keycaps e"><img src="/assets/ui/key-e.png" alt="E"></span> ใช้คอม
+          </div>
+          <div class="dio-prompt" id="dio-prompt">เดินไปยังคอมพิวเตอร์ที่มีสัญลักษณ์ E</div>
+          <div class="dio-banner hidden" id="dio-banner"></div>
+          <div class="term-veil" aria-hidden="true"></div>
 
-    <div class="diorama-wrap" id="diorama-wrap">
-      <canvas id="diorama"></canvas>
-      <div class="dio-label left" id="dio-A"></div>
-      <div class="dio-link" id="dio-link">SYSTEM LINK A ↔ B · OFFLINE</div>
-      <div class="dio-label right" id="dio-B"></div>
-      <div class="dio-banner hidden" id="dio-banner"></div>
+          <!-- Terminal: an in-world monitor that opens only after E next to your own computer -->
+          <section class="term-window" id="term-window" role="dialog" aria-label="เทอร์มินัล" hidden>
+            <div class="mon-bezel">
+              <div class="mon-screen">
+                <div class="term-head">
+                  <span class="term-title">&gt;_ <b id="term-device">-</b> <small id="term-step"></small></span>
+                  <span class="title-actions">
+                    <button class="term-btn" id="term-help">/help</button>
+                    <button class="term-btn" id="term-clear">clear</button>
+                    <button class="term-btn close" id="term-close" aria-label="ปิดเทอร์มินัล กลับไปเดิน">✕ Esc</button>
+                  </span>
+                </div>
+                <div class="term is-open" id="term">
+                  <div class="term-out" id="term-out" role="log" aria-live="polite"></div>
+                  <div class="term-suggest" id="term-suggest"></div>
+                  <div class="term-chips" id="term-chips"></div>
+                  <form class="term-form" id="term-form" autocomplete="off">
+                    <span class="term-prompt" id="term-prompt">&gt;</span>
+                    <input id="term-input" spellcheck="false" autocapitalize="off" aria-label="พิมพ์คำสั่ง">
+                  </form>
+                </div>
+              </div>
+              <span class="mon-label">KUHU · <span id="mon-device">PC</span></span>
+              <span class="mon-led" aria-hidden="true"></span>
+            </div>
+            <div class="mon-stand" aria-hidden="true"></div>
+          </section>
+
+          <!-- Mission -->
+          <section class="float-card sheet mission-sheet" id="panel-mission" role="dialog" aria-labelledby="mission-title" hidden>
+            <div class="sheet-head">
+              <span class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM8.5 11h1M11.5 11h4M8.5 14.5h1M11.5 14.5h4M8.5 18h1M11.5 18h4"/></svg></span>
+              <h2 id="mission-title">ภารกิจ</h2>
+              <button class="sheet-x" data-sheet-close aria-label="ปิด">✕</button>
+            </div>
+            <div class="sheet-tabs" role="tablist">
+              <button class="tab active" data-tab="mission" role="tab">ภารกิจ</button>
+              <button class="tab" data-tab="docs" role="tab">ข้อมูลในห้อง</button>
+              <button class="tab hidden" data-tab="report" role="tab" id="tab-report">รายงาน</button>
+            </div>
+            <div class="sheet-body">
+              <div class="tab-body" id="tab-mission"></div>
+              <div class="tab-body hidden" id="tab-docs"></div>
+              <div class="tab-body hidden" id="tab-report-body"></div>
+            </div>
+            <div class="sheet-foot">
+              <span class="foot-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> เวลาแนะนำ <b id="mission-limit">03:00</b></span>
+              <button class="pill-btn mint" data-sheet-close><img src="/assets/ui/back.png" alt=""> กลับไปเล่น</button>
+            </div>
+          </section>
+
+          <!-- Hints: text arrives from the server only after a level is opened -->
+          <section class="float-card sheet hint-sheet" id="panel-hints" role="dialog" aria-labelledby="hint-title" hidden>
+            <div class="sheet-head">
+              <img class="sheet-art" src="/assets/ui/hint.png" alt="">
+              <div><h2 id="hint-title">คำใบ้</h2><p class="sheet-sub">ค่อย ๆ ค้นหาคำตอบไปด้วยกัน</p></div>
+              <button class="sheet-x" data-sheet-close aria-label="ปิด">✕</button>
+            </div>
+            <div class="hint-rows" id="hint-rows"></div>
+            <div class="sheet-foot">
+              <span class="foot-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg> คะแนนจะถูกหักร่วมกันทั้งทีม · หักแล้ว <b id="tb-hints">0</b></span>
+              <span class="foot-key"><kbd>Esc</kbd> ปิด</span>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Right column: cards while walking, a slim rail while the terminal is open -->
+      <div class="side-zone">
+        <aside class="side-col" aria-label="ข้อมูลด่าน">
+          <div class="side-card hud-clock">
+            <span class="hud-timer" title="เวลาที่ใช้ / เวลาแนะนำ"><b id="tb-timer">00:00</b> <small id="tb-limit">/ 03:00</small></span>
+            <button class="hud-icon" id="tb-sound" title="เปิด/ปิดเสียง" aria-label="เปิดปิดเสียง"></button>
+            <button class="hud-icon" id="tb-settings" title="ตั้งค่า" aria-label="ตั้งค่า"><img src="/assets/ui/menu.png" alt=""></button>
+          </div>
+
+          <div class="side-card team-card" aria-live="polite">
+            <h3 class="card-title"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M3 19c.8-3 2.8-4.5 5-4.5s4.2 1.5 5 4.5M11 19c.8-3 2.8-4.5 5-4.5s4.2 1.5 5 4.5"/></svg>ทีม <small>ห้อง <b class="hud-code" id="tb-code">#----</b></small></h3>
+            <div class="team-line">
+              <div class="who A" id="dio-A"></div>
+              <div class="door" id="dio-link"><span class="door-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span>ประตูล็อก</span></div>
+              <div class="who B" id="dio-B"></div>
+            </div>
+          </div>
+
+          <div class="side-card mission-card">
+            <h3 class="card-title"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM8.5 11h1M11.5 11h4M8.5 14.5h1M11.5 14.5h4M8.5 18h1M11.5 18h4"/></svg>ภารกิจ
+              <small id="side-count"></small>
+              <button class="link-btn" id="map-docs" data-panel="panel-mission">ดูทั้งหมด ›</button></h3>
+            <ol class="side-todo" id="side-todo"></ol>
+          </div>
+
+          <div class="side-actions">
+            <button class="big-btn" id="map-hint" data-panel="panel-hints"><img src="/assets/ui/hint.png" alt=""><span>คำใบ้<small id="side-hint">ระดับ 1 · −5 คะแนน</small></span></button>
+            <button class="big-btn" id="map-room" data-panel="panel-mission" data-tab="docs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h7"/></svg><span>ข้อมูลในห้อง<small>เอกสารของคุณ</small></span></button>
+          </div>
+
+          <section class="side-card chat-card" id="panel-chat" aria-labelledby="chat-title">
+            <h3 class="card-title" id="chat-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 7 0 1 1 3.5 5.8L4 19.5l1.2-3.6A6.8 6.8 0 0 1 4 12z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/></svg>แชทกับเพื่อน
+              <span class="chat-online" id="chat-online"><i></i> ออนไลน์</span>
+              <button class="sheet-x pop-x" data-chat-close aria-label="ปิดแชท">✕</button></h3>
+            <div class="chat-log" id="chat-log" aria-live="polite"></div>
+            <div class="quick" id="chat-quick"></div>
+            <form class="chat-form" id="chat-form" autocomplete="off">
+              <input id="chat-input" maxlength="240" placeholder="พิมพ์ข้อความ… (Enter ส่ง)" title="Enter ส่ง · Esc กลับไปเดิน" aria-label="ข้อความแชท">
+              <button class="send-btn" aria-label="ส่งข้อความ"><svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-6.5 18-3-7.5z"/><path d="m11.5 13.5 4-4"/></svg></button>
+            </form>
+            <div class="side-stats"><span title="จำนวนคำสั่งที่ใช้ (ทั้งสองห้อง)">⌨ คำสั่ง <b id="tb-cmds">0</b><small id="tb-opt"></small></span></div>
+          </section>
+        </aside>
+
+        <!-- Terminal mode: rail + popups -->
+        <div class="term-hud" aria-label="เครื่องมือขณะใช้ Terminal">
+          <nav class="rail glass-card">
+            <button class="rail-btn active" id="rail-term"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg>Terminal</button>
+            <button class="rail-btn" id="rail-mission" data-panel="panel-mission"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM8.5 11h1M11.5 11h4M8.5 14.5h1M11.5 14.5h4M8.5 18h1M11.5 18h4"/></svg>ภารกิจ</button>
+            <button class="rail-btn" id="rail-hint" data-panel="panel-hints"><img src="/assets/ui/hint.png" alt="">คำใบ้</button>
+            <button class="rail-btn" id="map-chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 7 0 1 1 3.5 5.8L4 19.5l1.2-3.6A6.8 6.8 0 0 1 4 12z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/></svg>แชท<i class="tool-badge hidden" id="chat-badge"></i></button>
+          </nav>
+          <div class="peeks">
+            <button class="peek peek-chat hidden" id="peek-chat"><span class="peek-head"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 7 0 1 1 3.5 5.8L4 19.5l1.2-3.6A6.8 6.8 0 0 1 4 12z"/></svg><b id="peek-chat-who">เพื่อน</b><i class="newtag">ใหม่</i></span><span class="peek-text" id="peek-chat-text"></span></button>
+            <div class="peek peek-step" id="peek-step"><span class="peek-head"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 11h7M8.5 15h7"/></svg><b>ขั้นตอนตอนนี้</b><small id="peek-step-count"></small></span><span class="peek-text" id="peek-step-text"></span></div>
+          </div>
+        </div>
+      </div>
     </div>
-
-    <main class="game-main">
-      <section class="panel term-panel">
-        <div class="panel-title ink">
-          <span>เทอร์มินัล · <b id="term-device">-</b></span>
-          <span class="title-actions"><button class="btn tiny ghost" id="term-help">/help</button><button class="btn tiny ghost" id="term-clear">clear</button></span>
-        </div>
-        <div class="term" id="term">
-          <div class="term-out" id="term-out" role="log" aria-live="polite"></div>
-          <div class="term-suggest" id="term-suggest"></div>
-          <div class="term-chips" id="term-chips"></div>
-          <form class="term-form" id="term-form" autocomplete="off">
-            <span class="term-prompt" id="term-prompt">&gt;</span>
-            <input id="term-input" spellcheck="false" autocapitalize="off" aria-label="พิมพ์คำสั่ง">
-          </form>
-        </div>
-      </section>
-
-      <section class="panel docs-panel">
-        <div class="tabs" role="tablist">
-          <button class="tab active" data-tab="mission" role="tab">📋 ภารกิจ</button>
-          <button class="tab" data-tab="docs" role="tab">📁 ข้อมูลในห้อง</button>
-          <button class="tab" data-tab="report" role="tab" id="tab-report">📝 รายงาน</button>
-        </div>
-        <div class="tab-body" id="tab-mission"></div>
-        <div class="tab-body hidden" id="tab-docs"></div>
-        <div class="tab-body hidden" id="tab-report-body"></div>
-      </section>
-
-      <aside class="side-col">
-        <section class="panel chat-panel">
-          <div class="panel-title teal">แชท A ↔ B <small>(เปิดตลอดเวลา)</small></div>
-          <div class="chat-log" id="chat-log" aria-live="polite"></div>
-          <div class="quick" id="chat-quick"></div>
-          <form class="chat-form" id="chat-form" autocomplete="off">
-            <input id="chat-input" maxlength="240" placeholder="พิมพ์ข้อความถึงอีกห้อง..." aria-label="ข้อความแชท">
-            <button class="btn tiny teal">ส่ง</button>
-          </form>
-        </section>
-        <section class="panel hint-panel">
-          <div class="panel-title yellow">คำใบ้ <small>(หักคะแนนทั้งทีม)</small></div>
-          <div class="hint-buttons" id="hint-buttons"></div>
-          <div class="hint-list" id="hint-list"></div>
-        </section>
-      </aside>
-    </main>
   </section>
 
   <!-- Modals -->
   <div class="modal hidden" id="modal-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-    <div class="panel modal-panel">
-      <div class="panel-title pink" id="settings-title">ตั้งค่า <button class="x" data-close>✕</button></div>
-      <div class="setting-row"><span class="set-ico">🔈</span><span>เสียงเอฟเฟกต์ (Sound)</span><button class="toggle" id="set-sfx" role="switch"></button></div>
-      <div class="setting-row"><span class="set-ico">♫</span><span>เพลงประกอบ (BGM)</span><button class="toggle" id="set-bgm" role="switch"></button></div>
-      <div class="setting-row"><span class="set-ico">🎚</span><span>ความดัง</span><input type="range" id="set-volume" min="0" max="100"></div>
-      <div class="setting-row"><span class="set-ico fb">f</span><span>ช่องทางติดต่อ</span><a id="set-contact" target="_blank" rel="noopener">-</a></div>
+    <div class="set-win" id="set-win">
+      <div class="set-title">
+        <h2 id="settings-title"><img src="/assets/settings/parts/title-settings.png" alt="SETTINGS"></h2>
+        <span class="set-drag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>ลากเพื่อย้าย</span>
+        <button class="set-x" data-close aria-label="ปิดหน้าตั้งค่า"><img src="/assets/settings/parts/close.png" alt=""></button>
+      </div>
+      <div class="set-body">
+        <nav class="set-nav" role="tablist" aria-label="หมวดการตั้งค่า">
+          <button class="set-tab active" role="tab" data-set-tab="sound"><span class="i"><img src="/assets/settings/parts/speaker.png" alt=""></span>เสียง</button>
+          <button class="set-tab" role="tab" data-set-tab="window"><span class="i"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 8h18M7 6h.01M10 6h.01"/></svg></span>หน้าต่าง</button>
+          <button class="set-tab" role="tab" data-set-tab="keys"><span class="i"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span>ปุ่มควบคุม</button>
+          <button class="set-tab" role="tab" data-set-tab="contact"><span class="i"><img src="/assets/settings/parts/folder.png" alt=""></span>ติดต่อ</button>
+        </nav>
+
+        <section class="set-page" data-set-page="sound" role="tabpanel">
+          <h3>SOUND <small>เสียงในเกม</small></h3>
+          <div class="set-rows">
+            <div class="set-row" data-channel="master">
+              <img class="ic" src="/assets/settings/parts/speaker.png" alt="">
+              <div><b>MASTER</b><small>ความดังรวม</small></div>
+              <label class="px-slider"><span class="track"></span><span class="fill"></span><span class="knob"></span><input type="range" min="0" max="100" step="1" id="set-volume" aria-label="ความดังรวม"></label>
+              <span class="pct" id="set-volume-pct">60%</span>
+              <button class="px-switch" id="set-master" role="switch" aria-label="เปิดปิดเสียงทั้งหมด"><img alt=""></button>
+            </div>
+            <div class="set-row" data-channel="bgm">
+              <img class="ic" src="/assets/settings/parts/note.png" alt="">
+              <div><b>BGM</b><small>เพลงประกอบ</small></div>
+              <label class="px-slider"><span class="track"></span><span class="fill"></span><span class="knob"></span><input type="range" min="0" max="100" step="1" id="set-bgm-volume" aria-label="ความดังเพลงประกอบ"></label>
+              <span class="pct" id="set-bgm-volume-pct">70%</span>
+              <button class="px-switch" id="set-bgm" role="switch" aria-label="เปิดปิดเพลงประกอบ"><img alt=""></button>
+            </div>
+            <div class="set-row" data-channel="sfx">
+              <img class="ic" src="/assets/settings/parts/speaker.png" alt="">
+              <div><b>SFX</b><small>เสียงปุ่ม/เอฟเฟกต์</small></div>
+              <label class="px-slider"><span class="track"></span><span class="fill"></span><span class="knob"></span><input type="range" min="0" max="100" step="1" id="set-sfx-volume" aria-label="ความดังเสียงเอฟเฟกต์"></label>
+              <span class="pct" id="set-sfx-volume-pct">80%</span>
+              <button class="px-switch" id="set-sfx" role="switch" aria-label="เปิดปิดเสียงเอฟเฟกต์"><img alt=""></button>
+            </div>
+          </div>
+          <div class="set-panel"><button class="px-btn yellow" id="set-test">♪ ทดลองเสียง</button><p>ฟังระดับเสียงก่อนกลับไปเล่น · ปิด (NO) แล้วแถบจะเป็นสีเทา</p></div>
+        </section>
+
+        <section class="set-page" data-set-page="window" role="tabpanel" hidden>
+          <h3>WINDOW <small>หน้าต่างในเกม</small></h3>
+          <div class="set-rows">
+            <div class="set-opt">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>
+              <div><b>จำตำแหน่งหน้าต่าง</b><small>ภารกิจ คำใบ้ Terminal และแชท เปิดใหม่แล้วอยู่ที่เดิม</small></div>
+              <button class="px-switch" id="set-remember" role="switch" aria-label="จำตำแหน่งหน้าต่าง"><img alt=""></button>
+            </div>
+            <div class="set-opt">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="12" height="12"/><rect x="9" y="3" width="12" height="12"/></svg>
+              <div><b>Terminal อยู่บนสุดเสมอ</b><small>หน้าต่างอื่นไม่บังจอคอมขณะพิมพ์คำสั่ง</small></div>
+              <button class="px-switch" id="set-term-top" role="switch" aria-label="Terminal อยู่บนสุดเสมอ"><img alt=""></button>
+            </div>
+            <div class="set-opt">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/></svg>
+              <div><b>จัดทุกหน้าต่างกลับที่เดิม</b><small>ใช้เมื่อย้ายหน้าต่างไปไกลจนหาไม่เจอ</small></div>
+              <button class="px-btn" id="set-reset-windows">จัดเลย</button>
+            </div>
+          </div>
+          <div class="set-panel"><span class="kbd-px">2× CLICK</span><p>ดับเบิลคลิกที่แถบหัวหน้าต่างใดก็ได้ เพื่อคืนเฉพาะหน้าต่างนั้น</p></div>
+        </section>
+
+        <section class="set-page" data-set-page="keys" role="tabpanel" hidden>
+          <h3>CONTROLS <small>ปุ่มควบคุม</small></h3>
+          <div class="set-rows">
+            <dl class="set-keys">
+              <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>เดินในห้อง</dd>
+              <dt><kbd>E</kbd></dt><dd>ใช้คอมพิวเตอร์ (เปิด Terminal) เมื่อยืนใกล้เครื่อง</dd>
+              <dt><kbd>ESC</kbd></dt><dd>ปิดหน้าต่างทีละชั้น แล้วกลับไปเดิน</dd>
+              <dt><kbd>TAB</kbd><kbd>↑</kbd><kbd>↓</kbd></dt><dd>ใน Terminal: เติมคำสั่ง / ดูคำสั่งก่อนหน้า</dd>
+              <dt><kbd>ENTER</kbd></dt><dd>ส่งคำสั่ง หรือส่งข้อความแชท</dd>
+            </dl>
+          </div>
+          <div class="set-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><p>ลากแถบหัวเพื่อย้ายหน้าต่าง · ลากขอบหรือมุมเพื่อยืด/หด</p></div>
+        </section>
+
+        <section class="set-page" data-set-page="contact" role="tabpanel" hidden>
+          <h3>CONTACT <small>ติดต่อทีมพัฒนา</small></h3>
+          <div class="set-rows top">
+            <div class="set-contact">
+              <img src="/assets/settings/parts/folder.png" alt="">
+              <div><b>KUHU NET</b><a id="set-contact" target="_blank" rel="noopener"></a><p>แจ้งปัญหา ขอฟีเจอร์ หรือส่งคำติชมได้ที่เพจ</p></div>
+            </div>
+            <p class="set-credits">Two Rooms, One Network · เกมปริศนาเครือข่ายแบบร่วมมือ 2 คน<br>CP422011<span id="set-room"></span></p>
+          </div>
+        </section>
+      </div>
+      <div class="set-foot">
+        <button class="px-btn lav" id="set-reset"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/></svg>คืนค่าเริ่มต้น</button>
+        <span class="set-hint"><kbd>ESC</kbd> ปิด · บันทึกอัตโนมัติ</span>
+        <button class="set-back" data-close aria-label="กลับ"><img src="/assets/settings/parts/back.png" alt="BACK"></button>
+      </div>
     </div>
   </div>
 
@@ -215,7 +378,7 @@
         <div class="explain"><h4>คำอธิบายเฉลย</h4><p id="clear-explain"></p></div>
       </div>
       <div class="modal-actions">
-        <button class="btn ghost" id="clear-stay">ดูเทอร์มินัลต่อ</button>
+        <button class="btn ghost" id="clear-stay">เดินหาเพื่อนในห้อง</button>
         <button class="btn yellow" id="clear-select">เลือกด่าน</button>
         <button class="btn green big" id="clear-next">ด่านถัดไป ▶</button>
       </div>

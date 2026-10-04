@@ -4,6 +4,7 @@ import { stageCatalog, STAGES } from './stages/index.js';
 import { startRun, execute, submitForm, revealHint, roleView, publicRun } from './engine.js';
 import { scoreRun } from './scoring.js';
 import { recordTeam, topTeams } from './leaderboard.js';
+import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from '../../public/js/world.js';
 
 export const CHARACTERS = ['ping', 'packet', 'router', 'switch', 'cache', 'byte'];
 const ROLES = ['A', 'B'];
@@ -25,7 +26,7 @@ function unlockedUpTo(room) {
 }
 
 function publicPlayer(p) {
-  return p ? { name: p.name, charId: p.charId, ready: p.ready, connected: p.connected } : null;
+  return p ? { name: p.name, charId: p.charId, ready: p.ready, connected: p.connected, x: p.x, y: p.y, facing: p.facing, moving: p.moving, terminal: p.terminal } : null;
 }
 
 function roleOf(room, playerId) {
@@ -111,7 +112,7 @@ export function attachRooms(io) {
         cleanupTimer: null,
       };
       rooms.set(room.code, room);
-      room.slots.A = { id: playerId, name: clean(payload?.name, 16) || 'PLAYER-A', charId: 'ping', ready: false, connected: true, socketId: socket.id };
+      room.slots.A = { id: playerId, name: clean(payload?.name, 16) || 'PLAYER-A', charId: 'ping', ready: false, connected: true, socketId: socket.id, ...spawnPlayer(1, 'A') };
       const res = join(socket, room, room.slots.A, 'A');
       system(room, `${room.slots.A.name} สร้างห้อง ${room.code} (ห้อง A)`);
       ack?.(res);
@@ -154,6 +155,7 @@ export function attachRooms(io) {
         ready: false,
         connected: true,
         socketId: socket.id,
+        ...spawnPlayer(room.run?.stage.id || 1, role),
       };
       const res = join(socket, room, room.slots[role], role);
       system(room, `${room.slots[role].name} เข้าร่วมเป็นห้อง ${role}`);
@@ -231,6 +233,9 @@ export function attachRooms(io) {
       if (!ROLES.every((r) => room.slots[r])) return ack?.({ ok: false, error: 'ต้องมีผู้เล่นครบ 2 คน' });
       if (!Number.isInteger(id) || id < 1 || id > unlockedUpTo(room)) return ack?.({ ok: false, error: 'ด่านนี้ยังล็อกอยู่' });
       room.run = startRun(id, { sample: room.options.sample, seed: randomInt(1, 2 ** 31) });
+      for (const role of ROLES) {
+        if (room.slots[role]) Object.assign(room.slots[role], spawnPlayer(id, role));
+      }
       room.phase = 'play';
       system(room, `เริ่มด่าน ${id}: ${room.run.stage.title} — System Link A ↔ B: OFFLINE`);
       emitState(room);
@@ -248,10 +253,42 @@ export function attachRooms(io) {
       emitState(room);
     });
 
+    socket.on('player:move', (payload) => {
+      const room = findRoom(socket);
+      const role = room && roleOf(room, socket.data.playerId);
+      if (!role || room.phase !== 'play' || !room.run || !room.slots[role]) return;
+      const player = room.slots[role];
+      const now = Date.now();
+      const dt = Math.min(0.1, Math.max(0, (now - (player.lastMoveAt || now)) / 1000));
+      player.lastMoveAt = now;
+      const level = levelForStage(room.run.stage.id);
+      // Apply the direction that was held since the previous packet, then
+      // remember the new one; this matches how long the key was really down.
+      const next = movePlayer(level, role, player, player.input, dt, Boolean(room.run.passed));
+      Object.assign(player, next);
+      player.input = { x: Number(payload?.x) || 0, y: Number(payload?.y) || 0 };
+      if (player.input.x || player.input.y) player.moving = true;
+      io.to(room.code).emit('room:players', { players: { A: publicPlayer(room.slots.A), B: publicPlayer(room.slots.B) } });
+    });
+
+    socket.on('player:interact', (payload, ack) => {
+      const room = findRoom(socket);
+      const role = room && roleOf(room, socket.data.playerId);
+      if (!role || room.phase !== 'play' || !room.run || !room.slots[role]) return ack?.({ ok: false, error: 'ยังไม่ได้เริ่มด่าน' });
+      const player = room.slots[role];
+      const station = nearbyComputer(levelForStage(room.run.stage.id), role, player);
+      if (!station) return ack?.({ ok: false, error: 'เดินเข้าใกล้คอมพิวเตอร์ก่อน' });
+      player.terminal = Boolean(payload?.open);
+      io.to(room.code).emit('room:players', { players: { A: publicPlayer(room.slots.A), B: publicPlayer(room.slots.B) } });
+      io.to(room.code).emit('activity', { role, kind: player.terminal ? 'terminal-open' : 'terminal-close' });
+      ack?.({ ok: true, open: player.terminal });
+    });
+
     socket.on('term:exec', (payload, ack) => {
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run) return ack?.({ lines: [] });
+      if (!room.slots[role].terminal) return ack?.({ lines: [{ t: 'เดินไปที่คอมพิวเตอร์แล้วกด E เพื่อเปิด Terminal', c: 'warn', d: 0 }] });
       const now = Date.now();
       socket.data.execTimes = socket.data.execTimes.filter((t) => now - t < 2000);
       if (socket.data.execTimes.length >= 10) return ack?.({ lines: [{ t: 'พิมพ์คำสั่งเร็วเกินไป — รอสักครู่', c: 'warn', d: 0 }] });
@@ -315,6 +352,8 @@ export function attachRooms(io) {
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.slots[role].socketId !== socket.id) return;
       room.slots[role].connected = false;
+      room.slots[role].input = null;
+      room.slots[role].moving = false;
       room.slots[role].ready = room.phase === 'lobby' ? false : room.slots[role].ready;
       system(room, `${room.slots[role].name} หลุดการเชื่อมต่อ — เข้าห้อง ${room.code} อีกครั้งเพื่อเล่นต่อ`);
       emitState(room);

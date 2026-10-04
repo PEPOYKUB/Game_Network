@@ -10,3 +10,7 @@ presentation_build/**/*.inspect.ndjson
 presentation_build/**/slide-*.png
 presentation_build/**/montage.webp
 presentation_build/*-montage.png
+
+# Local QA output, mockups and source art (kept out of the repo)
+tmp/
+output/

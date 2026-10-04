@@ -1,12 +1,14 @@
 import { $, $$, el, fill, toast, openModal, closeModal, confirmBox, fmtTime, storage, wait } from './ui.js';
 import { socket, send, fire } from './net.js';
-import { settings, setSetting, unlockAudio, sfx } from './audio.js';
+import { settings, setSetting, unlockAudio, sfx, resetSettings, testSound } from './audio.js';
 import { startSky } from './sky.js';
 import { loadSprites, characters, paintChar, charName, iconUrl } from './sprites.js';
 import { Diorama } from './diorama.js';
+import { levelForStage } from './world.js';
 import { Terminal } from './terminal.js';
 import { renderDocs, renderMission, renderForm } from './docs.js';
 import { renderConfetti } from './confetti.js';
+import { makeWindow, front, resetAllWindows, setPinned, setRemember, windowClosed } from './windows.js';
 
 // Team contact shown in Settings (wireframe 1.2.3). Leave url empty to show the label only.
 const CONTACT = { label: 'Facebook · KUHU NET', url: '' };
@@ -14,7 +16,7 @@ const ROLE_TEXT = {
   A: 'ห้อง A — ส่วนใหญ่คุมเทอร์มินัลของเครื่องที่มีปัญหา เห็นอาการจริงของระบบ',
   B: 'ห้อง B — ส่วนใหญ่ถือเอกสาร ผัง และค่าที่ควรเป็น (บางด่านคุมเราเตอร์/เซิร์ฟเวอร์)',
 };
-const QUICK = ['👍 โอเค', '❓ ช่วยอ่านค่าให้หน่อย', '⏳ รอแป๊บ', '✅ แก้แล้ว ลองทดสอบดู'];
+const QUICK = ['รับทราบ', 'รอสักครู่', 'ขอข้อมูลเพิ่ม', 'แก้แล้ว ลองทดสอบดู'];
 
 const session = storage('session');
 const local = storage('local');
@@ -37,6 +39,9 @@ const S = {
   stageKey: '',
   clearShown: '',
   typingSent: 0,
+  hintOpen: new Set(),
+  checks: new Set(),
+  unread: 0,
 };
 session.set('kuhu.player', S.playerId);
 
@@ -44,8 +49,12 @@ session.set('kuhu.player', S.playerId);
 function show(name) {
   S.screen = name;
   $$('.screen').forEach((s) => s.classList.toggle('active', s.id === `screen-${name}`));
-  $('#sky').hidden = name === 'cover';
-  if (name === 'game') setTimeout(() => $('#term-input').focus(), 50);
+  $('#sky').hidden = name !== 'cover';
+  if (name === 'game') setTimeout(() => {
+    const terminalOpen = Boolean(S.room?.players?.[S.you]?.terminal);
+    if (terminalOpen) $('#term-input')?.focus();
+    else $('#diorama')?.focus();
+  }, 50);
 }
 
 function route() {
@@ -292,6 +301,10 @@ async function loadCatalog() {
   }
 }
 
+function stageArtUrl(id, fallback) {
+  return id <= 4 ? `/assets/levels/map-0${id}-pastel.png` : fallback;
+}
+
 async function renderSelect() {
   if (!S.catalog || S.screen === 'select') await loadCatalog();
   if (!S.room || S.room.phase !== 'select') return;
@@ -314,7 +327,7 @@ async function renderSelect() {
           el('small', {}, st.topic),
           el('div', { class: 'chips' }, el('span', { class: `chip tier-${st.tier}` }, st.tier), el('span', { class: 'chip' }, st.difficulty), el('span', { class: 'chip' }, `⏱ ${st.minutes} นาที`), c && el('span', { class: 'chip' }, `★ ${c.score} คะแนน · ${fmtTime(c.time)}`)),
         ),
-        el('img', { class: 'stage-icon', src: iconUrl(st.icon, 4), alt: '' }),
+        el('img', { class: 'stage-icon', src: stageArtUrl(st.id, iconUrl(st.icon, 4)), alt: '' }),
         el('button', { class: 'play-btn', disabled: locked, title: locked ? 'ผ่านด่านก่อนหน้าก่อน' : `เล่นด่าน ${st.id}`, 'aria-label': locked ? `ด่าน ${st.id} ล็อก` : `เล่นด่าน ${st.id}`, onclick: () => startStage(st.id) }, locked ? '🔒' : '▶'),
       );
     }),
@@ -349,8 +362,39 @@ function initSelect() {
 }
 
 // ---------------------------------------------------------------- game
+// The map is the main view. Terminal opens only with E next to your own computer
+// as a monitor over your room. Mission and hint sheets float over the map (and the
+// monitor); chat sits in the side column, or pops out from the rail while typing.
+const PANELS = ['panel-mission', 'panel-hints'];
+const isOpen = (id) => !$(`#${id}`).hidden;
+const terminalOpen = () => $('#screen-game').classList.contains('terminal-open');
+const chatPopped = () => $('#screen-game').classList.contains('chat-pop');
+const chatVisible = () => S.screen === 'game' && (!terminalOpen() || chatPopped());
+
 function initGameComponents() {
-  S.dio = new Diorama($('#diorama'));
+  S.dio = new Diorama($('#diorama'), {
+    // Movement stays enabled after a clear: the door is open and the pair can meet.
+    canControl: () => S.screen === 'game' && Boolean(S.room?.run)
+      && !document.querySelector('.modal:not(.hidden)')
+      && !terminalOpen()
+      && !PANELS.some(isOpen),
+    onInput: (input) => fire('player:move', input),
+    // Floating HUD cards on the map: the E markers move out from under them.
+    avoid: () => ['.hud-stage', '.hud-keys', '#dio-prompt', '#dio-banner:not(.hidden)'].map((q) => $(q)).filter((n) => n && n.offsetParent).map((n) => n.getBoundingClientRect()),
+    onInteract: async (near) => {
+      if (!near) return toast('เดินเข้าใกล้คอมพิวเตอร์ของห้องคุณก่อน แล้วกด E', true);
+      const res = await send('player:interact', { open: true });
+      if (!res.ok) toast(res.error || 'เปิด Terminal ไม่ได้', true);
+      else setTerminalOpen(res.open);
+      return undefined;
+    },
+    onPrompt: (text, near) => {
+      const prompt = $('#dio-prompt');
+      if (prompt) { prompt.textContent = text; prompt.classList.toggle('ready', near); }
+    },
+  });
+  S.dio.setRole(S.you);
+  window.__dio = S.dio; // read by the local QA scripts
   S.term = new Terminal({
     root: $('#term'),
     out: $('#term-out'),
@@ -370,19 +414,143 @@ function initGameComponents() {
   });
 }
 
+function focusMap() {
+  setTimeout(() => $('#diorama')?.focus({ preventScroll: true }), 20);
+}
+
+// Back to whatever the player was doing: typing commands or walking.
+function focusPlay() {
+  setTimeout(() => (terminalOpen() ? $('#term-input') : $('#diorama'))?.focus({ preventScroll: true }), 20);
+}
+
+function clearUnread() {
+  S.unread = 0;
+  $('#chat-badge').classList.add('hidden');
+  $('#peek-chat').classList.add('hidden');
+}
+
+function setChatPop(on) {
+  const screen = $('#screen-game');
+  if (!on && screen.classList.contains('chat-pop')) windowClosed($('#panel-chat'));
+  screen.classList.toggle('chat-pop', Boolean(on));
+  $('#map-chat').classList.toggle('active', Boolean(on));
+  $('#rail-term').classList.toggle('active', !on);
+  if (!on) return;
+  front($('#panel-chat'));
+  clearUnread();
+  $('#chat-log').scrollTop = $('#chat-log').scrollHeight;
+  setTimeout(() => $('#chat-input')?.focus(), 20);
+}
+
+function setTerminalOpen(open) {
+  const screen = $('#screen-game');
+  const changed = screen.classList.contains('terminal-open') !== Boolean(open);
+  screen.classList.toggle('terminal-open', Boolean(open));
+  $('#term-window').hidden = !open;
+  if (!changed) return;
+  if (!open) windowClosed($('#term-window'));
+  if (open) {
+    closePanels(false);
+    front($('#term-window'));
+    S.dio?.stop();
+    setTimeout(() => $('#term-input')?.focus(), 20);
+  } else {
+    setChatPop(false);
+    clearUnread();
+    focusMap();
+  }
+}
+
+function closeTerminal() {
+  if (!S.room?.players?.[S.you]?.terminal) return setTerminalOpen(false);
+  return send('player:interact', { open: false }).then((res) => {
+    if (res.ok) setTerminalOpen(false);
+  });
+}
+
+function currentTab() {
+  return $('.sheet-tabs .tab.active')?.dataset.tab;
+}
+
+function openPanel(id, tab) {
+  if (isOpen(id) && (!tab || tab === currentTab())) return closePanels();
+  for (const p of PANELS) $(`#${p}`).hidden = p !== id;
+  setChatPop(false);
+  S.dio?.stop();
+  sfx.click();
+  if (id === 'panel-mission') setTab(tab || 'mission');
+  front($(`#${id}`));
+  $(`#${id} .sheet-x`)?.focus({ preventScroll: true });
+  return undefined;
+}
+
+function closePanels(refocus = true) {
+  const wasOpen = PANELS.some(isOpen);
+  for (const p of PANELS) {
+    if (!$(`#${p}`).hidden) windowClosed($(`#${p}`));
+    $(`#${p}`).hidden = true;
+  }
+  if (wasOpen && refocus) focusPlay();
+}
+
+for (const btn of $$('#screen-game [data-panel]')) btn.onclick = () => openPanel(btn.dataset.panel, btn.dataset.tab);
+for (const btn of $$('[data-sheet-close]')) btn.onclick = () => closePanels();
+$('#term-close').onclick = closeTerminal;
+$('#map-chat').onclick = () => { sfx.click(); setChatPop(!chatPopped()); if (!chatPopped()) focusPlay(); };
+$('#peek-chat').onclick = () => setChatPop(true);
+$('#rail-term').onclick = () => { setChatPop(false); closePanels(false); focusPlay(); };
+$('[data-chat-close]').onclick = () => { setChatPop(false); focusPlay(); };
+// Every floating window can be dragged by its title bar and resized from its edges.
+makeWindow($('#panel-mission'), { handles: [$('#panel-mission .sheet-head')], minW: 420, minH: 320 });
+makeWindow($('#panel-hints'), { handles: [$('#panel-hints .sheet-head')], minW: 420, minH: 300 });
+makeWindow($('#term-window'), { handles: [$('#term-window .term-head'), $('#term-window .mon-bezel')], minW: 460, minH: 340 });
+makeWindow($('#panel-chat'), { handles: [$('#panel-chat .card-title')], minW: 290, minH: 280 });
+makeWindow($('#modal-clear .clear-panel'), { handles: [$('#clear-title')], minW: 520, minH: 360 });
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || S.screen !== 'game') return;
+  if (document.querySelector('.modal:not(.hidden)')) return;
+  if (PANELS.some(isOpen)) closePanels();
+  else if (chatPopped()) { setChatPop(false); focusPlay(); }
+  else if (terminalOpen()) closeTerminal();
+  else if (document.activeElement !== $('#diorama')) focusMap();
+});
+
 function stageKey() {
   const run = S.room?.run;
   return run ? `${run.stageId}-${run.startedAt}` : '';
 }
 
 function setTab(name) {
-  $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  $$('.sheet-tabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   $('#tab-mission').classList.toggle('hidden', name !== 'mission');
   $('#tab-docs').classList.toggle('hidden', name !== 'docs');
   $('#tab-report-body').classList.toggle('hidden', name !== 'report');
   if (name === 'docs') {
     fire('activity', { kind: 'docs' });
     S.dio?.activity(S.you, 'docs');
+  }
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// Team card: portrait, name and what each player is doing. Rebuilt only when
+// something visible changes, since player packets arrive many times a second.
+function renderTeam() {
+  const players = S.room?.players || {};
+  const sig = JSON.stringify(['A', 'B'].map((r) => players[r] && [players[r].name, players[r].charId, players[r].connected, players[r].terminal]).concat(S.you));
+  if (sig === S.teamSig) return;
+  S.teamSig = sig;
+  for (const role of ['A', 'B']) {
+    const p = players[role];
+    const box = $(`#dio-${role}`);
+    box.classList.toggle('away', p?.connected === false);
+    fill(box,
+      el('div', { class: 'face' }, p ? charCanvas(p.charId, false) : null),
+      el('div', {},
+        el('b', {}, `ห้อง ${role} · ${role === S.you ? 'คุณ' : 'เพื่อน'}`),
+        p?.terminal ? el('span', { class: 'busy' }, '>_ Terminal')
+          : el('small', {}, !p ? 'รอผู้เล่น' : p.connected === false ? `${p.name} · หลุด` : p.name)));
   }
 }
 
@@ -395,33 +563,47 @@ function renderGame() {
   if (newStage) {
     S.stageKey = key;
     S.formJson = '';
+    S.hintOpen = new Set();
     setTab('mission');
+    closePanels(false);
+    setChatPop(false);
+    clearUnread();
     closeModal('modal-clear');
     $('#dio-banner').classList.add('hidden');
   }
+  S.dio.setStage(run.stageId, key);
+  S.dio.setRole(S.you);
+  const level = levelForStage(run.stageId);
+  const screen = $('#screen-game');
+  screen.style.setProperty('--level-art', `url("${level.file}")`);
+  screen.style.setProperty('--map-ar', String(level.width / level.height));
+  screen.classList.toggle('role-A', S.you === 'A');
+  screen.classList.toggle('role-B', S.you === 'B');
+  S.dio.setActive(true);
   const m = run.meta;
-  $('#tb-num').textContent = `ด่าน ${m.id}/12`;
+  $('#tb-num').textContent = `${pad2(m.id)}/12`;
   $('#tb-title').textContent = m.title;
-  $('#tb-tier').textContent = m.tier;
-  $('#tb-tier').className = `chip tier-${m.tier}`;
-  $('#tb-role').textContent = `คุณ = ห้อง ${S.you}`;
-  $('#tb-role').className = `chip role ${S.you}`;
   $('#tb-code').textContent = `#${room.code}`;
   $('#tb-limit').textContent = `/ ${fmtTime(m.minutes * 60)}`;
+  $('#mission-limit').textContent = fmtTime(m.minutes * 60);
   $('#tb-cmds').textContent = run.commands;
-  $('#tb-opt').textContent = `/ ~${m.optimal}`;
-  $('#tb-hints').textContent = run.hints.length ? `−${run.hints.reduce((a, h) => a + h.penalty, 0)}` : '0';
+  $('#tb-opt').textContent = ` / ~${m.optimal}`;
+  const penalty = run.hints.reduce((a, h) => a + h.penalty, 0);
+  $('#tb-hints').textContent = penalty ? `−${penalty} คะแนน` : '0 คะแนน';
   const online = run.link === 'ONLINE';
-  $('#dio-link').textContent = `SYSTEM LINK A ↔ B · ${run.link}`;
-  $('#dio-link').classList.toggle('online', online);
-  for (const r of ['A', 'B']) {
-    const p = room.players[r];
-    const label = $(`#dio-${r}`);
-    fill(label, el('i', { class: `dot ${p?.connected ? 'on' : 'away'}` }), `ห้อง ${r} · ${p?.name ?? '-'}`, r === S.you && el('span', { class: 'you' }, 'คุณ'));
-  }
+  const door = $('#dio-link');
+  door.classList.toggle('online', online);
+  door.lastElementChild.textContent = online ? 'ประตูเปิดแล้ว' : 'ประตูล็อก';
+  door.title = online ? 'เดินหากันได้แล้ว' : 'ประตูจะเปิดเมื่อผ่านเงื่อนไขของด่าน';
+  renderTeam();
   S.dio.setPlayers(room.players);
   S.dio.setOnline(online);
+  S.dio.receive({ key, online, players: room.players });
+  setTerminalOpen(Boolean(room.players[S.you]?.terminal));
   const partner = room.players[S.you === 'A' ? 'B' : 'A'];
+  const chatOnline = $('#chat-online');
+  chatOnline.classList.toggle('away', !partner?.connected);
+  chatOnline.lastChild.textContent = partner?.connected ? ' ออนไลน์' : ' ออฟไลน์';
   const banner = $('#dio-banner');
   if (partner && !partner.connected) {
     banner.textContent = `${partner.name} หลุดการเชื่อมต่อ — รอกลับเข้าห้อง #${room.code}`;
@@ -435,33 +617,105 @@ function renderGame() {
     banner.classList.add('hidden');
   }
   renderHints(run);
-  if (S.view && S.view.stageId === run.stageId) renderMission($('#tab-mission'), run, S.view, S.you);
+  if (S.view && S.view.stageId === run.stageId) renderMissionTab(run, S.view);
   if (run.result && S.clearShown !== key) {
     S.clearShown = key;
     showClear(run);
   }
 }
 
+function renderMissionTab(run, view) {
+  const me = S.room?.players?.[S.you];
+  renderMission($('#tab-mission'), run, view, S.you, {
+    portrait: me && charCanvas(me.charId, false, 'portrait'),
+    checks: S.checks,
+    checkKey: S.stageKey,
+    onToggle: () => renderMissionTab(run, view),
+  });
+  renderSideMission(view);
+}
+
+// Side-column checklist and the "current step" popup share the mission tab's checks.
+function renderSideMission(view) {
+  const items = view?.do || [];
+  const keys = items.map((_, i) => `${S.stageKey}:${i}`);
+  const now = keys.findIndex((k) => !S.checks.has(k));
+  const done = keys.filter((k) => S.checks.has(k)).length;
+  const toggle = (k) => {
+    if (S.checks.has(k)) S.checks.delete(k); else S.checks.add(k);
+    if (S.room?.run && S.view) renderMissionTab(S.room.run, S.view);
+  };
+  $('#side-count').textContent = items.length ? `${done} / ${items.length}` : '';
+  fill($('#side-todo'), ...items.map((text, i) => {
+    const isDone = S.checks.has(keys[i]);
+    return el('li', {}, el('button', { type: 'button', class: isDone ? 'done' : i === now ? 'now' : '', 'aria-pressed': String(isDone), onclick: () => toggle(keys[i]) },
+      el('span', { class: 'box', 'aria-hidden': 'true' }), el('span', {}, text), i === now && el('em', {}, 'NOW')));
+  }));
+  $('#peek-step-text').textContent = now >= 0 ? items[now] : 'ทำครบแล้ว — รันคำสั่งตรวจสอบให้ผ่าน';
+  $('#peek-step-count').textContent = items.length ? `${Math.min(done + 1, items.length)} / ${items.length}` : '';
+  $('#term-step').textContent = now >= 0 ? `· ${items[now]}` : '';
+}
+
+// Level names follow the mockup; penalties stay the server's 5 / 10 / 15.
+const HINT_LEVELS = [
+  { level: 1, name: 'ทิศทาง', penalty: 5 },
+  { level: 2, name: 'แนวคิด', penalty: 10 },
+  { level: 3, name: 'วิธีแก้ไข', penalty: 15 },
+];
+
+function hintMiniMap(stageId) {
+  const level = levelForStage(stageId);
+  const canvas = el('canvas', { class: 'hint-map', width: 480, height: Math.round(480 * level.height / level.width), 'aria-label': 'แผนผังตำแหน่งคอมพิวเตอร์ของห้องคุณ' });
+  const image = new Image();
+  image.onload = () => {
+    const ctx = canvas.getContext('2d');
+    const k = canvas.width / level.width;
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 3;
+    for (const s of level.stations[S.you] || []) {
+      ctx.strokeStyle = '#ff4f9a';
+      ctx.beginPath(); ctx.arc(s.screen.x * k, s.screen.y * k, 18, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#ffffffdd'; ctx.fillRect(s.x * k - 9, s.y * k - 9, 18, 18);
+      ctx.fillStyle = '#2d2a4a'; ctx.font = '700 13px Prompt, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('E', s.x * k, s.y * k + 5);
+    }
+  };
+  image.src = level.file;
+  return canvas;
+}
+
 function renderHints(run) {
   const next = run.hints.length + 1;
-  fill($('#hint-buttons'), 
-    ...[1, 2, 3].map((level) => {
-      const used = level < next;
-      const penalty = { 1: 5, 2: 10, 3: 15 }[level];
-      return el(
-        'button',
-        {
-          class: `btn tiny ${used ? 'ghost' : level === next ? 'yellow' : 'ghost'}`,
-          disabled: used || level !== next || Boolean(run.result),
-          onclick: () => revealHint(level, penalty),
-        },
-        used ? `✓ ระดับ ${level}` : `ระดับ ${level} (−${penalty})`,
-      );
-    }),
-  );
-  fill($('#hint-list'), 
-    ...(run.hints.length ? run.hints.map((h) => el('div', { class: 'hint' }, el('b', {}, `ระดับ ${h.level} (−${h.penalty}): `), h.text)) : [el('div', { class: 'empty-note', style: 'padding:6px' }, 'ลองคุยกันก่อน! /help ในเทอร์มินัลไม่หักคะแนน')]),
-  );
+  const upcoming = HINT_LEVELS.find((h) => h.level === next);
+  $('#side-hint').textContent = run.result ? 'ด่านผ่านแล้ว' : upcoming ? `ระดับ ${next} · −${upcoming.penalty}` : 'เปิดครบ 3 ระดับแล้ว';
+  const latest = run.hints.length;
+  if (latest && !S.hintOpen.has(`seen-${latest}`)) {
+    S.hintOpen.add(`seen-${latest}`);
+    S.hintOpen.add(latest);
+  }
+  fill($('#hint-rows'), ...HINT_LEVELS.map(({ level, name, penalty }) => {
+    const hint = run.hints.find((h) => h.level === level);
+    const title = el('b', {}, `ระดับ ${level} · ${name}`);
+    if (hint) {
+      const open = S.hintOpen.has(level);
+      const toggle = () => {
+        if (S.hintOpen.has(level)) S.hintOpen.delete(level); else S.hintOpen.add(level);
+        renderHints(S.room.run);
+      };
+      return el('div', { class: `hint-row revealed ${open ? 'open' : ''}` },
+        el('button', { class: 'hint-row-head', type: 'button', 'aria-expanded': String(open), onclick: toggle },
+          title, el('span', { class: 'badge-open' }, 'เปิดแล้ว'), el('span', { class: 'chev' }, '⌄')),
+        open && el('div', { class: 'hint-text' }, el('p', {}, hint.text), level === 1 && hintMiniMap(run.stageId)));
+    }
+    const isNext = level === next && !run.result;
+    return el('div', { class: `hint-row ${isNext ? 'next' : 'locked'}` },
+      el('div', { class: 'hint-row-head' },
+        title,
+        el('span', { class: 'cost' }, `-${penalty} คะแนน`),
+        isNext
+          ? el('button', { class: 'pill-btn mint small', type: 'button', onclick: () => revealHint(level, penalty) }, 'เปิดคำใบ้')
+          : el('button', { class: 'pill-btn lock small', type: 'button', disabled: true, 'aria-label': run.result ? 'ด่านผ่านแล้ว' : `เปิดระดับ ${level - 1} ก่อน` }, el('span', { class: 'lock-ico', 'aria-hidden': 'true' })),
+        el('span', { class: 'chev side' }, '›')));
+  }));
 }
 
 async function revealHint(level, penalty) {
@@ -477,8 +731,9 @@ function onView(view) {
   const run = S.room?.run;
   S.term?.setView(view, `${view.stageId}-${run?.startedAt ?? ''}`);
   $('#term-device').textContent = view.device ? view.device.name : 'ไม่มีอุปกรณ์ (ถือเอกสาร)';
+  $('#mon-device').textContent = view.device ? view.device.name : 'DOCS';
   renderDocs($('#tab-docs'), view);
-  if (run) renderMission($('#tab-mission'), run, view, S.you);
+  if (run) renderMissionTab(run, view);
   $('#tab-report').classList.toggle('hidden', !view.form);
   const formJson = JSON.stringify(view.form);
   if (formJson !== S.formJson) {
@@ -493,7 +748,7 @@ function onView(view) {
     if (view.form?.enabled && wasLocked) {
       $('#tab-report').classList.add('flash');
       setTimeout(() => $('#tab-report').classList.remove('flash'), 2000);
-      toast('แบบฟอร์มรายงานพร้อมแล้ว — ดูแท็บ 📝 รายงาน');
+      toast('แบบฟอร์มรายงานพร้อมแล้ว — เปิดปุ่ม ภารกิจ → รายงาน');
     }
   }
 }
@@ -504,7 +759,7 @@ function showClear(run) {
   const stars = r.total >= 140 ? 3 : r.total >= 110 ? 2 : 1;
   fill($('#clear-stars'), ...[1, 2, 3].map((i) => el('span', { class: i <= stars ? 'on' : '' }, '★')));
   const row = (label, value, cls = '') => el('tr', { class: cls }, el('td', {}, label), el('td', { class: value > 0 ? 'pos' : value < 0 ? 'neg' : '' }, value > 0 ? `+${value}` : String(value)));
-  fill($('#clear-score'), 
+  fill($('#clear-score'),
     row('คะแนนพื้นฐาน', r.base),
     row(`โบนัสความเร็ว (${fmtTime(r.elapsed)} / ${fmtTime(r.limit)})`, r.timeBonus),
     r.overtime ? row('เกินเวลาแนะนำ', r.overtime) : null,
@@ -527,14 +782,15 @@ function showClear(run) {
 }
 
 function initGame() {
-  $$('.tab').forEach((t) => (t.onclick = () => { sfx.click(); setTab(t.dataset.tab); }));
+  $$('.sheet-tabs .tab').forEach((t) => (t.onclick = () => { sfx.click(); setTab(t.dataset.tab); }));
   $('#term-help').onclick = () => S.term.run('/help');
   $('#term-clear').onclick = () => fill($('#term-out'), );
   $('#tb-settings').onclick = openSettings;
   $('#tb-sound').onclick = () => {
-    const on = !(settings.sfx || settings.bgm);
-    setSetting('sfx', on);
-    setSetting('bgm', on);
+    // Audible -> mute everything; silent for any reason -> master on, and both channels if both were off.
+    const audible = settings.master && (settings.sfx || settings.bgm);
+    setSetting('master', !audible);
+    if (!audible && !settings.sfx && !settings.bgm) { setSetting('sfx', true); setSetting('bgm', true); }
     unlockAudio();
     updateSoundIcon();
   };
@@ -548,15 +804,16 @@ function initGame() {
     closeModal('modal-clear');
     fire('stage:quit');
   };
+  const sendChat = (text) => {
+    if (text) fire('chat:send', { text });
+  };
   $('#chat-form').onsubmit = (e) => {
     e.preventDefault();
     const input = $('#chat-input');
-    const text = input.value.trim();
-    if (!text) return;
-    fire('chat:send', { text });
+    sendChat(input.value.trim());
     input.value = '';
   };
-  fill($('#chat-quick'), ...QUICK.map((q) => el('button', { type: 'button', onclick: () => fire('chat:send', { text: q }) }, q)));
+  fill($('#chat-quick'), ...QUICK.map((q, i) => el('button', { type: 'button', class: i === 0 ? 'primary' : '', onclick: () => sendChat(q) }, q)));
   setInterval(() => {
     const run = S.room?.run;
     if (S.screen !== 'game' || !run) return;
@@ -567,50 +824,123 @@ function initGame() {
 }
 
 // ---------------------------------------------------------------- chat
+function chatTime(at) {
+  const d = new Date(at || Date.now());
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 function addChat(msg) {
   const log = $('#chat-log');
   const mine = msg.from === S.you;
-  const node =
-    msg.from === 'sys'
-      ? el('div', { class: 'msg sys' }, msg.text)
-      : el('div', { class: `msg ${msg.from} ${mine ? 'me' : ''}` }, el('b', {}, `ห้อง ${msg.from} · ${msg.name}`), msg.text);
+  let node;
+  if (msg.from === 'sys') node = el('div', { class: 'msg sys' }, msg.text);
+  else {
+    const p = S.room?.players?.[msg.from];
+    node = el('div', { class: `msg ${msg.from} ${mine ? 'me' : 'them'}` },
+      el('div', { class: 'avatar' }, p ? charCanvas(p.charId, false) : null),
+      el('div', { class: 'msg-main' },
+        el('div', { class: 'msg-who' }, `${mine ? 'คุณ' : 'เพื่อน'} · ห้อง ${msg.from}`),
+        el('div', { class: 'msg-row' }, el('div', { class: 'bubble' }, msg.text), el('time', {}, chatTime(msg.at)))));
+  }
   log.append(node);
   while (log.children.length > 80) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
 }
 
 // ---------------------------------------------------------------- settings & how to play
+const SOUND_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>';
+const SOUND_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="m17 9 5 6M22 9l-5 6"/></svg>';
 function updateSoundIcon() {
-  $('#tb-sound').textContent = settings.sfx || settings.bgm ? '🔊' : '🔇';
+  $('#tb-sound').innerHTML = settings.master && (settings.sfx || settings.bgm) ? SOUND_ON : SOUND_OFF;
+}
+
+// Window preferences live beside the audio settings but in their own key.
+const WIN_DEFAULTS = { remember: true, termOnTop: false };
+const winPrefs = { ...WIN_DEFAULTS, ...local.get('kuhu.windows', {}) };
+function applyWinPrefs() {
+  local.set('kuhu.windows', winPrefs);
+  setRemember(winPrefs.remember);
+  setPinned(winPrefs.termOnTop ? $('#term-window') : null);
+}
+
+const SWITCH_ART = { true: '/assets/settings/parts/yes.png', false: '/assets/settings/parts/no.png' };
+const SOUND_ROWS = [
+  { row: 'master', on: 'master', level: 'volume', input: '#set-volume' },
+  { row: 'bgm', on: 'bgm', level: 'bgmVolume', input: '#set-bgm-volume' },
+  { row: 'sfx', on: 'sfx', level: 'sfxVolume', input: '#set-sfx-volume' },
+];
+
+function paintSwitch(btn, on) {
+  btn.setAttribute('aria-checked', String(on));
+  const img = btn.querySelector('img');
+  img.src = SWITCH_ART[on];
+  img.alt = on ? 'YES' : 'NO';
+}
+
+function paintSettings() {
+  for (const { row, on, level, input } of SOUND_ROWS) {
+    const box = $(`.set-row[data-channel="${row}"]`);
+    const muted = !settings[on] || (row !== 'master' && !settings.master);
+    box.classList.toggle('off', muted);
+    $(input).value = settings[level];
+    box.querySelector('.px-slider').style.setProperty('--v', `${settings[level]}%`);
+    $(`${input}-pct`).textContent = `${settings[level]}%`;
+    paintSwitch($(`#set-${on}`), settings[on]);
+  }
+  paintSwitch($('#set-remember'), winPrefs.remember);
+  paintSwitch($('#set-term-top'), winPrefs.termOnTop);
+  updateSoundIcon();
+}
+
+function setSettingsTab(name) {
+  $$('.set-tab').forEach((t) => { t.classList.toggle('active', t.dataset.setTab === name); t.setAttribute('aria-selected', String(t.dataset.setTab === name)); });
+  $$('.set-page').forEach((p) => (p.hidden = p.dataset.setPage !== name));
+}
+
+function initSettings() {
+  $$('.set-tab').forEach((t) => (t.onclick = () => { sfx.click(); setSettingsTab(t.dataset.setTab); }));
+  for (const { on, level, input } of SOUND_ROWS) {
+    $(input).oninput = (e) => { setSetting(level, Number(e.target.value)); paintSettings(); };
+    $(input).onchange = () => sfx.click();
+    $(`#set-${on}`).onclick = () => {
+      setSetting(on, !settings[on]);
+      unlockAudio();
+      sfx.click();
+      paintSettings();
+    };
+  }
+  $('#set-test').onclick = () => testSound();
+  $('#set-remember').onclick = () => { winPrefs.remember = !winPrefs.remember; applyWinPrefs(); sfx.click(); paintSettings(); };
+  $('#set-term-top').onclick = () => { winPrefs.termOnTop = !winPrefs.termOnTop; applyWinPrefs(); sfx.click(); paintSettings(); };
+  $('#set-reset-windows').onclick = () => {
+    resetAllWindows();
+    if (chatPopped()) setChatPop(true);
+    sfx.click();
+    toast('จัดทุกหน้าต่างกลับที่เดิมแล้ว');
+  };
+  $('#set-reset').onclick = async () => {
+    if (!(await confirmBox('คืนค่าเริ่มต้น', 'คืนค่าเสียงและการตั้งค่าหน้าต่างทั้งหมดเป็นค่าเริ่มต้น?', 'คืนค่า'))) return;
+    resetSettings();
+    Object.assign(winPrefs, WIN_DEFAULTS);
+    applyWinPrefs();
+    paintSettings();
+  };
+  const contact = $('#set-contact');
+  contact.textContent = CONTACT.url ? `${CONTACT.label} ↗` : CONTACT.label;
+  if (CONTACT.url) contact.href = CONTACT.url;
+  else contact.removeAttribute('href');
+  makeWindow($('#set-win'), { handles: [$('#set-win .set-title')], minW: 640, minH: 480 });
+  applyWinPrefs();
 }
 
 function openSettings() {
+  S.dio?.stop();
   sfx.click();
-  const paint = () => {
-    $('#set-sfx').classList.toggle('on', settings.sfx);
-    $('#set-sfx').setAttribute('aria-checked', String(settings.sfx));
-    $('#set-bgm').classList.toggle('on', settings.bgm);
-    $('#set-bgm').setAttribute('aria-checked', String(settings.bgm));
-    $('#set-volume').value = settings.volume;
-    updateSoundIcon();
-  };
-  $('#set-sfx').onclick = () => {
-    setSetting('sfx', !settings.sfx);
-    sfx.click();
-    paint();
-  };
-  $('#set-bgm').onclick = () => {
-    setSetting('bgm', !settings.bgm);
-    unlockAudio();
-    paint();
-  };
-  $('#set-volume').oninput = (e) => setSetting('volume', Number(e.target.value));
-  const contact = $('#set-contact');
-  contact.textContent = CONTACT.label;
-  if (CONTACT.url) contact.href = CONTACT.url;
-  else contact.removeAttribute('href');
-  paint();
+  $('#set-room').textContent = S.room?.code ? ` · ห้องเกม #${S.room.code}` : '';
+  paintSettings();
   openModal('modal-settings');
+  front($('#set-win'));
+  setTimeout(() => $('.set-tab.active')?.focus({ preventScroll: true }), 20);
 }
 
 function buildHowTo() {
@@ -649,6 +979,14 @@ socket.on('room:state', (st) => {
   if (st.phase === 'select' && prevPhase !== 'select') S.catalog = null;
   route();
 });
+socket.on('room:players', ({ players }) => {
+  if (!S.room || !players) return;
+  S.room.players = players;
+  S.dio?.setPlayers(players);
+  S.dio?.receive({ key: stageKey(), online: S.room.run?.link === 'ONLINE', players });
+  if (S.screen === 'game') renderTeam();
+  setTerminalOpen(Boolean(players[S.you]?.terminal));
+});
 socket.on('stage:view', onView);
 socket.on('chat:history', (list) => {
   fill($('#chat-log'), );
@@ -656,6 +994,14 @@ socket.on('chat:history', (list) => {
 });
 socket.on('chat:msg', (msg) => {
   addChat(msg);
+  if (msg.from !== 'sys' && msg.from !== S.you && !chatVisible()) {
+    S.unread += 1;
+    $('#chat-badge').textContent = String(Math.min(S.unread, 9));
+    $('#chat-badge').classList.remove('hidden');
+    $('#peek-chat-who').textContent = `เพื่อน · ห้อง ${msg.from}`;
+    $('#peek-chat-text').textContent = msg.text;
+    $('#peek-chat').classList.remove('hidden');
+  }
   if (msg.from !== 'sys' && msg.from !== S.you) {
     sfx.chat();
     S.dio?.say(msg.from);
@@ -704,5 +1050,6 @@ initRoom();
 initSelect();
 initGame();
 buildHowTo();
+initSettings();
 updateSoundIcon();
 show('cover');
