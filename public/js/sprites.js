@@ -27,20 +27,28 @@ export async function loadSprites(onProgress) {
 }
 
 export const characters = () => manifest?.characters.chars ?? [];
-export const frameSize = () => (manifest ? { w: manifest.characters.frameW, h: manifest.characters.frameH } : { w: 25, h: 53 });
+const charMeta = (id) => characters().find((c) => c.id === id);
+export const frameSize = (id) => {
+  const meta = charMeta(id);
+  return { w: meta?.frameW ?? manifest?.characters.frameW ?? 25, h: meta?.frameH ?? manifest?.characters.frameH ?? 53 };
+};
+export const frameCount = (id) => charMeta(id)?.frames ?? manifest?.characters.frames ?? 2;
 export const charName = (id) => characters().find((c) => c.id === id)?.name ?? id;
 
-export function drawChar(ctx, id, frame, x, y, flip = false) {
+export function drawChar(ctx, id, frame, x, y, flip = false, direction = 'front') {
   const img = images[id] || images.ping;
   if (!img) return;
-  const { w, h } = frameSize();
+  const { w, h } = frameSize(id);
+  const meta = charMeta(id);
+  const sourceX = (frame % frameCount(id)) * w;
+  const sourceY = (meta?.directions?.[direction] ?? 0) * h;
   ctx.save();
-  if (flip) {
+  if (flip && !meta?.directions) {
     ctx.translate(Math.round(x) + w, Math.round(y));
     ctx.scale(-1, 1);
-    ctx.drawImage(img, (frame % 2) * w, 0, w, h, 0, 0, w, h);
+    ctx.drawImage(img, sourceX, sourceY, w, h, 0, 0, w, h);
   } else {
-    ctx.drawImage(img, (frame % 2) * w, 0, w, h, Math.round(x), Math.round(y), w, h);
+    ctx.drawImage(img, sourceX, sourceY, w, h, Math.round(x), Math.round(y), w, h);
   }
   ctx.restore();
 }
@@ -48,7 +56,7 @@ export function drawChar(ctx, id, frame, x, y, flip = false) {
 /** Paints one frame into a small canvas element (CSS scales it up with pixelated rendering). */
 export function paintChar(canvas, id, frame = 0) {
   if (!manifest) return;
-  const { w, h } = frameSize();
+  const { w, h } = frameSize(id);
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');

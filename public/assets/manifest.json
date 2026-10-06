@@ -31,6 +31,34 @@
         "file": "/assets/chars/ping.png"
       },
       {
+        "id": "student-one",
+        "name": "ตัวละคร 1",
+        "file": "/assets/chars/student-one.png",
+        "frameW": 36,
+        "frameH": 56,
+        "frames": 4,
+        "directions": {
+          "front": 0,
+          "right": 1,
+          "back": 2,
+          "left": 3
+        }
+      },
+      {
+        "id": "student-two",
+        "name": "ตัวละคร 2",
+        "file": "/assets/chars/student-two.png",
+        "frameW": 36,
+        "frameH": 56,
+        "frames": 4,
+        "directions": {
+          "front": 0,
+          "right": 1,
+          "back": 2,
+          "left": 3
+        }
+      },
+      {
         "id": "packet",
         "name": "Packet",
         "file": "/assets/chars/packet.png"

@@ -1,4 +1,4 @@
-import { drawChar, frameSize } from './sprites.js';
+import { drawChar, frameSize, frameCount } from './sprites.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from './world.js';
 
 const COLORS = { A: '#3fd6a8', B: '#f27fc4' };
@@ -121,7 +121,7 @@ export class Diorama {
       // Predict the controlled character without pulling it toward an older packet
       // every frame. Remote characters still interpolate network snapshots.
       if (role === this.role && (this.direction().x || this.direction().y)) continue;
-      const factor = Math.min(1, dt * 15); c.x += (target.x - c.x) * factor; c.y += (target.y - c.y) * factor; c.facing = target.facing; c.moving = target.moving; c.terminal = target.terminal;
+      const factor = Math.min(1, dt * 15); c.x += (target.x - c.x) * factor; c.y += (target.y - c.y) * factor; c.facing = target.facing; c.direction = target.direction || c.direction; c.moving = target.moving; c.terminal = target.terminal;
     }
     const near = Boolean(nearbyComputer(this.level, this.role, this.chars[this.role]));
     const prompt = !this.connected ? 'กำลังเชื่อมต่อกลับ…' : local?.terminal ? 'Terminal เปิดอยู่ · Esc กลับไปเดิน' : near ? 'กด E เพื่อเปิด Terminal' : 'เดินไปที่คอมพิวเตอร์ที่มีสัญลักษณ์ E';
@@ -184,11 +184,11 @@ export class Diorama {
     ctx.imageSmoothingEnabled = false;
     for (const role of ['A', 'B'].sort((x, y) => (this.chars[x]?.y || 0) - (this.chars[y]?.y || 0))) {
       if (!this.players[role] || role !== this.role && !this.targets?.[role]) continue;
-      const c = this.chars[role], p = this.players[role], { w, h } = frameSize(); ctx.save(); ctx.globalAlpha = p.connected === false ? .45 : 1;
+      const c = this.chars[role], p = this.players[role], { w, h } = frameSize(p.charId); ctx.save(); ctx.globalAlpha = p.connected === false ? .45 : 1;
       ctx.fillStyle = 'rgba(60, 40, 110, .22)'; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 22, 8, 0, 0, Math.PI * 2); ctx.fill();
       if (role === this.role) { ctx.strokeStyle = COLORS[role]; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 26, 10, 0, 0, Math.PI * 2); ctx.stroke(); }
       // Sprites follow the mockup scale (about 1/6 of the room height); collision stays at the feet.
-      const size = 2; ctx.translate(Math.round(c.x - w * size / 2), Math.round(c.y - h * size + 4)); ctx.scale(size, size); drawChar(ctx, p.charId, c.moving ? Math.floor(now * 7) % 2 : 0, 0, 0, c.facing < 0); ctx.restore();
+      const size = 2; ctx.translate(Math.round(c.x - w * size / 2), Math.round(c.y - h * size + 4)); ctx.scale(size, size); drawChar(ctx, p.charId, c.moving ? Math.floor(now * 7) % frameCount(p.charId) : 0, 0, 0, c.facing < 0, c.direction); ctx.restore();
       this.text(role === this.role ? `คุณ · ${p.name}` : `เพื่อน · ${p.name}`, c.x, c.y + 26, role === 'A' ? '#16806a' : '#b0367d', 12, true);
       if (c.terminal || this.bubbles[role]?.until > performance.now()) this.text(c.terminal ? '>_' : '···', c.x, c.y - h * size - 4, '#4b3f78', 15, true);
     }

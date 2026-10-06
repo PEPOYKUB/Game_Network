@@ -64,7 +64,7 @@ export function levelForStage(stageId) {
 }
 
 export function spawnPlayer(stageId, role) {
-  return { ...levelForStage(stageId).spawn[role], facing: role === 'A' ? 1 : -1, moving: false, terminal: false, input: null };
+  return { ...levelForStage(stageId).spawn[role], facing: role === 'A' ? 1 : -1, direction: 'front', moving: false, terminal: false, input: null };
 }
 
 export function canStand(level, role, x, y, online = false) {
@@ -86,6 +86,7 @@ export function movePlayer(level, role, player, input, dt, online = false) {
   const steps = Math.max(1, Math.ceil(distance / 4));
   const vx = dx / length * distance / steps, vy = dy / length * distance / steps;
   if (dx) next.facing = dx > 0 ? 1 : -1;
+  next.direction = Math.abs(dy) >= Math.abs(dx) && dy ? (dy > 0 ? 'front' : 'back') : (dx > 0 ? 'right' : 'left');
   for (let i = 0; i < steps; i++) {
     if (canStand(level, role, next.x + vx, next.y, online)) next.x += vx;
     if (canStand(level, role, next.x, next.y + vy, online)) next.y += vy;

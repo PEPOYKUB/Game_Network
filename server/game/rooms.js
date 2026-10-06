@@ -6,7 +6,7 @@ import { scoreRun } from './scoring.js';
 import { recordTeam, topTeams } from './leaderboard.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from '../../public/js/world.js';
 
-export const CHARACTERS = ['ping', 'packet', 'router', 'switch', 'cache', 'byte'];
+export const CHARACTERS = ['ping', 'student-one', 'student-two', 'packet', 'router', 'switch', 'cache', 'byte'];
 const ROLES = ['A', 'B'];
 const EMPTY_ROOM_TTL = 10 * 60 * 1000;
 const rooms = new Map();
@@ -26,7 +26,7 @@ function unlockedUpTo(room) {
 }
 
 function publicPlayer(p) {
-  return p ? { name: p.name, charId: p.charId, ready: p.ready, connected: p.connected, x: p.x, y: p.y, facing: p.facing, moving: p.moving, terminal: p.terminal } : null;
+  return p ? { name: p.name, charId: p.charId, ready: p.ready, connected: p.connected, x: p.x, y: p.y, facing: p.facing, direction: p.direction, moving: p.moving, terminal: p.terminal } : null;
 }
 
 function roleOf(room, playerId) {
