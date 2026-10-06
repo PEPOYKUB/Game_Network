@@ -13,7 +13,7 @@ import json
 import math
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "art" / "source"
@@ -210,8 +210,49 @@ def build_characters():
             out_frames.append(g)
         strip(out_frames).save(OUT / "chars" / f"{cid}.png")
         chars.append({"id": cid, "name": name, "file": f"/assets/chars/{cid}.png"})
+    chars[1:1] = [
+        build_supplied_character("student-one", "ตัวละคร 1"),
+        build_supplied_character("student-two", "ตัวละคร 2"),
+    ]
     print("characters", frames[0].size, "palette refs", refs)
     return {"frameW": frames[0].width, "frameH": frames[0].height, "frames": 2, "chars": chars}
+
+
+def build_supplied_character(char_id, name):
+    """Pack one of the team's four-direction PNG exports into a pixel sprite."""
+    source = SRC / "characters" / char_id
+    directions = ("front", "right", "back", "left")
+    frame_w, frame_h = 36, 56
+    sheet = Image.new("RGBA", (frame_w * 4, frame_h * 4), (0, 0, 0, 0))
+
+    for row, direction in enumerate(directions):
+        frames = []
+        for number in range(1, 5):
+            im = Image.open(source / f"{direction}-{number}.png").convert("RGBA")
+            # The back-facing exports have an opaque white canvas. Only remove
+            # white connected to the edge, leaving any white clothing intact.
+            if im.getpixel((0, 0)) == (255, 255, 255, 255):
+                ImageDraw.floodfill(im, (0, 0), (0, 0, 0, 0))
+            bbox = im.getchannel("A").getbbox()
+            if not bbox:
+                raise ValueError(f"Empty character frame: {direction}-{number}")
+            frames.append(im.crop(bbox))
+
+        scale = min(frame_w / max(im.width for im in frames), frame_h / max(im.height for im in frames))
+        for column, im in enumerate(frames):
+            width = max(1, round(im.width * scale))
+            height = max(1, round(im.height * scale))
+            sprite = im.resize((width, height), Image.Resampling.NEAREST)
+            x = column * frame_w + (frame_w - width) // 2
+            y = row * frame_h + frame_h - height
+            sheet.alpha_composite(sprite, (x, y))
+
+    sheet.save(OUT / "chars" / f"{char_id}.png", optimize=True)
+    return {
+        "id": char_id, "name": name, "file": f"/assets/chars/{char_id}.png",
+        "frameW": frame_w, "frameH": frame_h, "frames": 4,
+        "directions": {name: row for row, name in enumerate(directions)},
+    }
 
 
 def main():
