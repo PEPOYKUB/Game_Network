@@ -1,10 +1,12 @@
 // Room lifecycle (lobby → stage select → play) and every Socket.IO event the client uses.
+// Co-op rooms (mode "coop") are handled here unchanged; FFA / 2v2 rooms are delegated to competitive.js.
 import { randomInt, randomUUID } from 'node:crypto';
 import { stageCatalog, STAGES } from './stages/index.js';
-import { startRun, execute, submitForm, revealHint, roleView, publicRun } from './engine.js';
+import { startRun, execute, submitForm, revealHint, roleView, publicRun, publicProgress } from './engine.js';
 import { scoreRun } from './scoring.js';
 import { recordTeam, topTeams } from './leaderboard.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from '../../public/js/world.js';
+import { createCompetitive, COMPETITIVE_MODES } from './competitive.js';
 
 export const CHARACTERS = ['ping', 'student-one', 'student-two', 'packet', 'router', 'switch', 'cache', 'byte'];
 const ROLES = ['A', 'B'];
@@ -47,6 +49,8 @@ export function attachRooms(io) {
         players: { A: publicPlayer(room.slots.A), B: publicPlayer(room.slots.B) },
         progress: { cleared: room.progress.cleared, unlocked: unlockedUpTo(room), finalCode: room.progress.finalCode || null },
         run: room.run ? publicRun(room.run) : null,
+        mode: 'coop',
+        stageProgress: publicProgress(room.run),
       });
     }
   };
@@ -82,24 +86,55 @@ export function attachRooms(io) {
   };
 
   const findRoom = (socket) => rooms.get(socket.data.code) || null;
+  const cleanupLater = (room) => {
+    clearTimeout(room.cleanupTimer);
+    room.cleanupTimer = setTimeout(() => rooms.delete(room.code), EMPTY_ROOM_TTL);
+    room.cleanupTimer.unref?.();
+  };
+  /** The competitive room this socket belongs to, or null for co-op / no room. */
+  const competitive = (socket) => {
+    const room = findRoom(socket);
+    return room && room.mode !== 'coop' ? room : null;
+  };
 
-  const join = (socket, room, player, role) => {
+  /**
+   * Make `socket` the only connection that speaks for `player`. A previous socket of the same player
+   * (old tab, half-open connection) loses its room membership and identity, so it can neither act
+   * nor keep receiving room broadcasts. The socket also leaves any other room it was in.
+   */
+  const bindSocket = (socket, room, player) => {
+    const previous = player.socketId && player.socketId !== socket.id ? io.sockets.sockets.get(player.socketId) : null;
+    if (previous) {
+      previous.leave(room.code);
+      previous.data.code = null;
+      previous.data.playerId = null;
+      previous.emit('session:replaced', { code: room.code });
+    }
+    if (socket.data.code && socket.data.code !== room.code) socket.leave(socket.data.code);
     player.socketId = socket.id;
     player.connected = true;
     socket.data.code = room.code;
     socket.data.playerId = player.id;
     socket.join(room.code);
+  };
+
+  const join = (socket, room, player, role) => {
+    bindSocket(socket, room, player);
     clearTimeout(room.cleanupTimer);
     socket.emit('chat:history', room.chat);
     return { ok: true, code: room.code, role };
   };
+
+  const comp = createCompetitive({ io, rooms, clean, characters: CHARACTERS, system, unlockedUpTo, cleanupLater, bindSocket });
 
   io.on('connection', (socket) => {
     socket.data.execTimes = [];
 
     socket.on('room:create', (payload, ack) => {
       const playerId = clean(payload?.playerId, 64) || randomUUID();
+      const mode = COMPETITIVE_MODES.includes(payload?.mode) ? payload.mode : 'coop';
       const room = {
+        mode,
         code: newCode(),
         id: randomUUID(),
         createdAt: Date.now(),
@@ -112,6 +147,7 @@ export function attachRooms(io) {
         cleanupTimer: null,
       };
       rooms.set(room.code, room);
+      if (mode !== 'coop') return comp.create(socket, { ...payload, playerId }, ack, room);
       room.slots.A = { id: playerId, name: clean(payload?.name, 16) || 'PLAYER-A', charId: 'ping', ready: false, connected: true, socketId: socket.id, ...spawnPlayer(1, 'A') };
       const res = join(socket, room, room.slots.A, 'A');
       system(room, `${room.slots.A.name} สร้างห้อง ${room.code} (ห้อง A)`);
@@ -124,6 +160,7 @@ export function attachRooms(io) {
       const room = rooms.get(code);
       if (!room) return ack?.({ ok: false, error: `ไม่พบห้องหมายเลข ${code || '-'}` });
       const playerId = clean(payload?.playerId, 64) || randomUUID();
+      if (room.mode !== 'coop') return comp.join(socket, { ...payload, playerId }, ack, room);
       const existing = roleOf(room, playerId);
       if (existing) {
         const res = join(socket, room, room.slots[existing], existing);
@@ -165,6 +202,8 @@ export function attachRooms(io) {
     });
 
     socket.on('room:leave', () => {
+      const c = competitive(socket);
+      if (c) return comp.leave(socket, c);
       const room = findRoom(socket);
       if (!room) return;
       const role = roleOf(room, socket.data.playerId);
@@ -185,6 +224,8 @@ export function attachRooms(io) {
     });
 
     socket.on('lobby:character', (payload) => {
+      const c = competitive(socket);
+      if (c) return comp.character(socket, payload, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'lobby' || !CHARACTERS.includes(payload?.charId)) return;
@@ -193,6 +234,8 @@ export function attachRooms(io) {
     });
 
     socket.on('lobby:ready', (payload) => {
+      const c = competitive(socket);
+      if (c) return comp.ready(socket, payload, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'lobby') return;
@@ -201,6 +244,8 @@ export function attachRooms(io) {
     });
 
     socket.on('lobby:swap', () => {
+      const c = competitive(socket);
+      if (c) return undefined;
       const room = findRoom(socket);
       if (!room || room.phase !== 'lobby' || !roleOf(room, socket.data.playerId)) return;
       [room.slots.A, room.slots.B] = [room.slots.B, room.slots.A];
@@ -210,6 +255,8 @@ export function attachRooms(io) {
     });
 
     socket.on('lobby:start', (_payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.lobbyStart(socket, ack, c);
       const room = findRoom(socket);
       if (!room || !roleOf(room, socket.data.playerId)) return ack?.({ ok: false });
       const both = ROLES.every((r) => room.slots[r]?.connected && room.slots[r].ready);
@@ -219,12 +266,38 @@ export function attachRooms(io) {
       return ack?.({ ok: true });
     });
 
+    socket.on('lobby:team', (payload, ack) => {
+      const room = findRoom(socket);
+      if (!room) return ack?.({ ok: false, error: 'ไม่ได้อยู่ในห้อง' });
+      return comp.team(socket, payload, ack, room);
+    });
+
+    socket.on('stage:role', (payload, ack) => {
+      const c = competitive(socket);
+      if (!c) return ack?.({ ok: false, error: 'ใช้ได้เฉพาะโหมดแข่งขัน' });
+      return comp.role(socket, payload, ack, c);
+    });
+
+    socket.on('item:pickup', (payload, ack) => {
+      const c = competitive(socket);
+      if (!c) return ack?.({ ok: false, error: 'ไอเทมใช้ได้เฉพาะโหมดแข่งขัน' });
+      return comp.itemPickup(socket, payload, ack, c);
+    });
+
+    socket.on('item:use', (payload, ack) => {
+      const c = competitive(socket);
+      if (!c) return ack?.({ ok: false, error: 'ไอเทมใช้ได้เฉพาะโหมดแข่งขัน' });
+      return comp.itemUse(socket, payload, ack, c);
+    });
+
     socket.on('stage:catalog', (_payload, ack) => {
       const room = findRoom(socket);
       ack?.({ stages: stageCatalog(), leaderboard: topTeams(10, room?.id) });
     });
 
     socket.on('stage:start', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.stageStart(socket, payload, ack, c);
       const room = findRoom(socket);
       if (!room || !roleOf(room, socket.data.playerId)) return ack?.({ ok: false });
       const id = Number(payload?.stageId);
@@ -244,6 +317,8 @@ export function attachRooms(io) {
     });
 
     socket.on('stage:quit', () => {
+      const c = competitive(socket);
+      if (c) return comp.stageQuit(socket, c);
       const room = findRoom(socket);
       if (!room || !roleOf(room, socket.data.playerId) || room.phase !== 'play') return;
       const unfinished = room.run && !room.run.result;
@@ -254,6 +329,8 @@ export function attachRooms(io) {
     });
 
     socket.on('player:move', (payload) => {
+      const c = competitive(socket);
+      if (c) return comp.move(socket, payload, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run || !room.slots[role]) return;
@@ -272,6 +349,8 @@ export function attachRooms(io) {
     });
 
     socket.on('player:interact', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.interact(socket, payload, ack, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run || !room.slots[role]) return ack?.({ ok: false, error: 'ยังไม่ได้เริ่มด่าน' });
@@ -285,6 +364,8 @@ export function attachRooms(io) {
     });
 
     socket.on('term:exec', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.exec(socket, payload, ack, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run) return ack?.({ lines: [] });
@@ -306,6 +387,8 @@ export function attachRooms(io) {
     });
 
     socket.on('form:submit', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.form(socket, payload, ack, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run) return ack?.({ ok: false, message: 'ไม่ได้อยู่ในด่าน' });
@@ -319,6 +402,8 @@ export function attachRooms(io) {
     });
 
     socket.on('hint:reveal', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.hint(socket, payload, ack, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || !room.run) return ack?.({ ok: false });
@@ -330,6 +415,8 @@ export function attachRooms(io) {
     });
 
     socket.on('chat:send', (payload) => {
+      const c = competitive(socket);
+      if (c) return comp.chat(socket, payload, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       const text = clean(payload?.text, 240);
@@ -341,6 +428,8 @@ export function attachRooms(io) {
     });
 
     socket.on('activity', (payload) => {
+      const c = competitive(socket);
+      if (c) return undefined;
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || !['typing', 'docs'].includes(payload?.kind)) return;
@@ -348,6 +437,8 @@ export function attachRooms(io) {
     });
 
     socket.on('disconnect', () => {
+      const c = competitive(socket);
+      if (c) return comp.disconnect(socket, c);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.slots[role].socketId !== socket.id) return;
@@ -357,13 +448,16 @@ export function attachRooms(io) {
       room.slots[role].ready = room.phase === 'lobby' ? false : room.slots[role].ready;
       system(room, `${room.slots[role].name} หลุดการเชื่อมต่อ — เข้าห้อง ${room.code} อีกครั้งเพื่อเล่นต่อ`);
       emitState(room);
-      if (!ROLES.some((r) => room.slots[r]?.connected)) {
-        room.cleanupTimer = setTimeout(() => rooms.delete(room.code), EMPTY_ROOM_TTL);
-      }
+      if (!ROLES.some((r) => room.slots[r]?.connected)) cleanupLater(room);
     });
   });
 }
 
 export function roomCount() {
   return rooms.size;
+}
+
+/** Test-only access to authoritative room state (no socket path reaches this). */
+export function inspectRoom(code) {
+  return rooms.get(code) || null;
 }

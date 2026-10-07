@@ -1,6 +1,9 @@
 import { drawChar, frameSize, frameCount } from './sprites.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from './world.js';
 
+const isComp = (mode) => mode === 'ffa' || mode === 'team';
+const DROP_ICON = { configErase: '🧽', configGlitch: '⚡', shield: '🛡️', reflect: '🪞' };
+
 const COLORS = { A: '#3fd6a8', B: '#f27fc4' };
 const images = new Map();
 const eIcon = new Image();
@@ -17,6 +20,7 @@ export class Diorama {
     this.keys = new Set();
     this.online = false;
     this.role = 'A';
+    this.mode = 'coop'; this.playerId = null; this.side = 'A';
     this.active = false;
     this.connected = true;
     this.bubbles = {};
@@ -65,7 +69,9 @@ export class Diorama {
   setActive(active) { this.active = active; if (!active) this.stop(); else this.resize(); }
   setPlayers(players) { this.players = players; }
   setRole(role) { this.role = role || 'A'; }
+  setMode(mode, playerId, side) { this.mode = mode || 'coop'; this.playerId = isComp(this.mode) ? playerId : null; this.side = side || 'A'; this.role = this.playerId || this.side; }
   setOnline(online) { this.online = online; }
+  setDrops(drops) { this.drops = drops || []; }
   setConnected(connected) { this.connected = connected; if (!connected) this.stop(); }
 
   setStage(id, key) {
@@ -78,12 +84,13 @@ export class Diorama {
   receive(state) {
     if (state.key !== this.key) return;
     this.online = state.online; this.targets = state.players;
-    for (const role of ['A', 'B']) {
+    const roles = isComp(this.mode) ? Object.keys(state.players || {}) : ['A', 'B'];
+    for (const role of roles) {
       const p = state.players[role]; if (!p) continue;
       if (!this.received || !this.chars[role]) this.chars[role] = { ...p };
       const c = this.chars[role]; c.terminal = p.terminal;
       const error = Math.hypot(c.x - p.x, c.y - p.y);
-      if (role === this.role && error > 70 || !this.received) { c.x = p.x; c.y = p.y; }
+      if ((role === this.role && error > 70) || !this.received) { c.x = p.x; c.y = p.y; }
     }
     this.received = true;
   }
@@ -104,7 +111,14 @@ export class Diorama {
   keydown(e) {
     if (!this.active || !this.connected || e.ctrlKey || e.altKey || e.metaKey || !this.canControl?.() || e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
     if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) { e.preventDefault(); this.keys.add(e.code); this.sendInput(true); }
-    else if (e.code === 'KeyE' && !e.repeat) { e.preventDefault(); this.stop(); this.onInteract?.(Boolean(nearbyComputer(this.level, this.role, this.chars[this.role]))); }
+    else if (e.code === 'KeyE' && !e.repeat) {
+      e.preventDefault(); this.stop();
+      const me = this.chars[this.role];
+      const station = isComp(this.mode)
+        ? ['A', 'B'].flatMap((side) => (this.level.stations[side] || []).map((s) => ({ ...s, side }))).find((s) => me && Math.hypot(s.x - me.x, s.y - me.y) <= 56)
+        : nearbyComputer(this.level, this.role, me);
+      this.onInteract?.(Boolean(station), station?.side || this.side);
+    }
   }
 
   activity(role, kind) { this.bubbles[role] = { kind, until: performance.now() + 1700 }; }
@@ -114,16 +128,19 @@ export class Diorama {
     const local = this.chars[this.role];
     if (local && this.received && this.connected && !local.terminal) {
       const input = this.direction();
-      if (input.x || input.y) this.chars[this.role] = movePlayer(this.level, this.role, local, input, dt, this.online);
+      if (input.x || input.y) this.chars[this.role] = movePlayer(this.level, this.side, local, input, dt, isComp(this.mode) || this.online);
     }
-    for (const role of ['A', 'B']) {
+    const roles = isComp(this.mode) ? Object.keys(this.players || {}) : ['A', 'B'];
+    for (const role of roles) {
       const target = this.targets?.[role]; const c = this.chars[role]; if (!target || !c) continue;
       // Predict the controlled character without pulling it toward an older packet
       // every frame. Remote characters still interpolate network snapshots.
       if (role === this.role && (this.direction().x || this.direction().y)) continue;
       const factor = Math.min(1, dt * 15); c.x += (target.x - c.x) * factor; c.y += (target.y - c.y) * factor; c.facing = target.facing; c.direction = target.direction || c.direction; c.moving = target.moving; c.terminal = target.terminal;
     }
-    const near = Boolean(nearbyComputer(this.level, this.role, this.chars[this.role]));
+    const near = isComp(this.mode)
+      ? ['A', 'B'].some((side) => nearbyComputer(this.level, side, local))
+      : Boolean(nearbyComputer(this.level, this.role, local));
     const prompt = !this.connected ? 'กำลังเชื่อมต่อกลับ…' : local?.terminal ? 'Terminal เปิดอยู่ · Esc กลับไปเดิน' : near ? 'กด E เพื่อเปิด Terminal' : 'เดินไปที่คอมพิวเตอร์ที่มีสัญลักษณ์ E';
     if (prompt !== this.prompt) { this.prompt = prompt; this.onPrompt?.(prompt, near); }
   }
@@ -141,7 +158,7 @@ export class Diorama {
 
     // Door between the rooms: barred while the stage link is offline.
     const [a, b] = level.split, [top, bottom] = level.passage;
-    if (!this.online) {
+    if (!this.online && !isComp(this.mode)) {
       ctx.fillStyle = 'rgba(255, 120, 150, .16)'; ctx.fillRect(a, top, b - a, bottom - top);
       for (const x of [a + 3, b - 3]) {
         ctx.fillStyle = '#ff7a9a'; ctx.fillRect(x - 2, top, 4, bottom - top);
@@ -154,17 +171,17 @@ export class Diorama {
 
     const me = this.chars[this.role];
     const near = nearbyComputer(level, this.role, me);
-    const stations = level.stations[this.role] || [];
+    const stations = isComp(this.mode) ? [...(level.stations.A || []).map((s) => ({ ...s, side: 'A' })), ...(level.stations.B || []).map((s) => ({ ...s, side: 'B' }))] : (level.stations[this.role] || []).map((s) => ({ ...s, side: this.role }));
     const blocked = this.blockedAreas();
     this.markers = [];
     for (const station of stations) {
-      const { x, y } = station.screen; const active = station === near;
+      const { x, y } = station.screen; const side = station.side; const active = Boolean(me && Math.hypot(station.x - me.x, station.y - me.y) <= 56);
       const glow = ctx.createRadialGradient(x, y, 3, x, y, active ? 70 : 50);
-      glow.addColorStop(0, `${COLORS[this.role]}${active ? '66' : '33'}`); glow.addColorStop(1, `${COLORS[this.role]}00`); ctx.fillStyle = glow; ctx.fillRect(x - 70, y - 70, 140, 140);
+      glow.addColorStop(0, `${COLORS[side]}${active ? '66' : '33'}`); glow.addColorStop(1, `${COLORS[side]}00`); ctx.fillStyle = glow; ctx.fillRect(x - 70, y - 70, 140, 140);
       // Floor spot: where to stand to use this computer.
       const pulse = (Math.sin(now * 3) + 1) / 2;
-      ctx.save(); ctx.setLineDash([6, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = `${COLORS[this.role]}${active ? 'ff' : 'cc'}`;
-      ctx.fillStyle = `${COLORS[this.role]}${active ? '40' : '22'}`;
+      ctx.save(); ctx.setLineDash([6, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = `${COLORS[side]}${active ? 'ff' : 'cc'}`;
+      ctx.fillStyle = `${COLORS[side]}${active ? '40' : '22'}`;
       ctx.beginPath(); ctx.ellipse(station.x, station.y, 24 + pulse * 5, 9 + pulse * 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
       const size = active ? 50 : 40, bob = Math.sin(now * (active ? 6 : 2.4)) * 2.5;
       const spot = this.markerSpot(station, size, blocked);
@@ -181,15 +198,24 @@ export class Diorama {
       ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-6, -8); ctx.lineTo(-2, 0); ctx.lineTo(-6, 8); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
     }
 
+    // Item drops (server-placed) on the shared corridor.
+    for (const d of this.drops || []) {
+      const pulse = (Math.sin(now * 5) + 1) / 2, close = me && Math.hypot(d.x - me.x, d.y - me.y) <= 40;
+      ctx.save(); ctx.fillStyle = close ? 'rgba(255, 214, 90, .55)' : 'rgba(255, 214, 90, .3)'; ctx.beginPath(); ctx.arc(d.x, d.y, 16 + pulse * 4, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 2.5; ctx.strokeStyle = '#8a5a00'; ctx.stroke(); ctx.restore();
+      this.text(DROP_ICON[d.item] || '?', d.x, d.y + 6, '#2d2a4a', 16, true);
+      if (close) this.text('F เก็บ', d.x, d.y - 24, '#8a5a00', 12, true);
+    }
     ctx.imageSmoothingEnabled = false;
-    for (const role of ['A', 'B'].sort((x, y) => (this.chars[x]?.y || 0) - (this.chars[y]?.y || 0))) {
+    const roles = isComp(this.mode) ? Object.keys(this.players || {}) : ['A', 'B'];
+    for (const role of roles.sort((x, y) => (this.chars[x]?.y || 0) - (this.chars[y]?.y || 0))) {
       if (!this.players[role] || role !== this.role && !this.targets?.[role]) continue;
       const c = this.chars[role], p = this.players[role], { w, h } = frameSize(p.charId); ctx.save(); ctx.globalAlpha = p.connected === false ? .45 : 1;
       ctx.fillStyle = 'rgba(60, 40, 110, .22)'; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 22, 8, 0, 0, Math.PI * 2); ctx.fill();
-      if (role === this.role) { ctx.strokeStyle = COLORS[role]; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 26, 10, 0, 0, Math.PI * 2); ctx.stroke(); }
+      if (role === this.role) { ctx.strokeStyle = COLORS[p.roomSide || this.side || role] || '#8a70dd'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 26, 10, 0, 0, Math.PI * 2); ctx.stroke(); }
       // Sprites follow the mockup scale (about 1/6 of the room height); collision stays at the feet.
       const size = 2; ctx.translate(Math.round(c.x - w * size / 2), Math.round(c.y - h * size + 4)); ctx.scale(size, size); drawChar(ctx, p.charId, c.moving ? Math.floor(now * 7) % frameCount(p.charId) : 0, 0, 0, c.facing < 0, c.direction); ctx.restore();
-      this.text(role === this.role ? `คุณ · ${p.name}` : `เพื่อน · ${p.name}`, c.x, c.y + 26, role === 'A' ? '#16806a' : '#b0367d', 12, true);
+      this.text(role === this.role ? `คุณ · ${p.name}` : `${role} · ${p.name}`, c.x, c.y + 26, (COLORS[p.roomSide || role] ? (p.roomSide || role) === 'A' ? '#16806a' : '#b0367d' : '#634ea0'), 12, true);
       if (c.terminal || this.bubbles[role]?.until > performance.now()) this.text(c.terminal ? '>_' : '···', c.x, c.y - h * size - 4, '#4b3f78', 15, true);
     }
   }

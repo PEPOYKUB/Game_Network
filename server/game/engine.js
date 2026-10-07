@@ -19,6 +19,10 @@ export function startRun(stageId, { sample = false, seed = Date.now() } = {}) {
     hints: [],
     commandLog: [],
     scoreEvents: [],
+    roleProgress: {
+      A: { actions: 0, configurations: 0, verifications: 0 },
+      B: { actions: 0, configurations: 0, verifications: 0 },
+    },
     passed: false,
     result: null,
   };
@@ -35,6 +39,7 @@ function context(run, role, parsed) {
       run.scoreEvents.push({ type: 'wrong_config', role, detail, at: Date.now() });
     },
     pass() {
+      if (!run.passed) run.roleProgress[role].verifications += 1;
       run.passed = true;
     },
   };
@@ -59,6 +64,8 @@ export function execute(run, role, input) {
   const counted = !run.result;
   if (counted) {
     run.commands += 1;
+    run.roleProgress[role].actions += 1;
+    if (COMMANDS[parsed.name].kind === 'config') run.roleProgress[role].configurations += 1;
     run.scoreEvents.push({ type: 'command_used', role, detail: parsed.name, at: Date.now() });
   }
   let lines;
@@ -77,6 +84,7 @@ export function submitForm(run, role, data) {
   const form = run.stage.form;
   if (!form || form.role !== role) return { ok: false, message: 'ห้องของคุณไม่มีแบบฟอร์มในด่านนี้' };
   if (run.result) return { ok: true, message: 'ด่านนี้ผ่านแล้ว' };
+  run.roleProgress[role].actions += 1;
   const wasPassed = run.passed;
   const res = form.submit(context(run, role, null), data && typeof data === 'object' ? data : {});
   run.commandLog.push({ role, command: `[form] ${JSON.stringify(data).slice(0, 100)}`, at: Date.now(), result: res.message });
@@ -131,5 +139,19 @@ export function publicRun(run) {
     hints: run.hints,
     link: run.passed ? 'ONLINE' : 'OFFLINE',
     result: run.result,
+  };
+}
+
+/** Safe stage progress for the room HUD. Never includes commands, config, or ground truth. */
+export function publicProgress(run) {
+  if (!run) return null;
+  return {
+    stageId: run.stage.id,
+    updatedAt: Date.now(),
+    complete: Boolean(run.passed),
+    players: Object.fromEntries(['A', 'B'].map((role) => [role, {
+      ...run.roleProgress[role],
+      complete: Boolean(run.passed),
+    }])),
   };
 }

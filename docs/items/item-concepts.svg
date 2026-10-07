@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 450" role="img" aria-labelledby="title desc" shape-rendering="crispEdges">
+  <title id="title">KUHU NET — item concepts</title>
+  <desc id="desc">Five pixel-art game item concepts: Config Erase, Config Glitch, Shield, Reflect, and Switch Lever.</desc>
+  <rect width="1200" height="450" rx="24" fill="#171b3d"/>
+  <path d="M24 56h1152M24 420h1152" stroke="#383d70" stroke-width="2"/>
+  <text x="42" y="39" fill="#b5ffe6" font-family="Prompt,Arial,sans-serif" font-size="17" font-weight="700" letter-spacing="2">KUHU NET / ITEM DROP CONCEPTS</text>
+  <g transform="translate(32 78)">
+    <rect width="216" height="318" rx="12" fill="#24294e" stroke="#f27fc4" stroke-width="3"/>
+    <rect x="54" y="42" width="108" height="98" fill="#11172f" stroke="#f27fc4" stroke-width="6"/>
+    <rect x="68" y="57" width="56" height="8" fill="#ffb7e3"/><rect x="68" y="76" width="72" height="8" fill="#acb9ec"/>
+    <rect x="68" y="95" width="38" height="8" fill="#acb9ec"/><rect x="123" y="95" width="20" height="8" fill="#f27fc4"/>
+    <path d="M82 116h38" stroke="#f27fc4" stroke-width="7"/><path d="m126 110 12 12m0-12-12 12" stroke="#ffe2f3" stroke-width="5"/>
+    <rect x="78" y="146" width="60" height="9" fill="#f27fc4"/><rect x="94" y="155" width="28" height="13" fill="#b65c9f"/>
+    <text x="108" y="215" text-anchor="middle" fill="#fff2fa" font-family="Prompt,Arial,sans-serif" font-size="17" font-weight="700">CONFIG ERASE</text>
+    <text x="108" y="246" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">ลบคอนฟิก 1 รายการ</text>
+    <text x="108" y="267" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">คืนเป็นค่าเริ่มต้น</text>
+  </g>
+  <g transform="translate(266 78)">
+    <rect width="216" height="318" rx="12" fill="#24294e" stroke="#b484ff" stroke-width="3"/>
+    <rect x="61" y="43" width="94" height="94" fill="#171b3d" stroke="#b484ff" stroke-width="6"/>
+    <path d="M74 65h33m-33 16h54m-54 16h26m-26 16h47" stroke="#a9f8ed" stroke-width="7"/>
+    <path d="m119 60 17 0-9 15 16 0-27 29 7-20-15 0z" fill="#ffda66"/>
+    <path d="M48 73h12m96 39h13M54 126h17m87-73h10" stroke="#ff74b9" stroke-width="6"/>
+    <rect x="80" y="143" width="56" height="9" fill="#b484ff"/><rect x="94" y="152" width="28" height="13" fill="#7956c7"/>
+    <text x="108" y="215" text-anchor="middle" fill="#fff2fa" font-family="Prompt,Arial,sans-serif" font-size="17" font-weight="700">CONFIG GLITCH</text>
+    <text x="108" y="246" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">คอนฟิกรวนชั่วคราว</text>
+    <text x="108" y="267" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">เตือน 2 วินาที</text>
+  </g>
+  <g transform="translate(500 78)">
+    <rect width="216" height="318" rx="12" fill="#24294e" stroke="#55e3b2" stroke-width="3"/>
+    <path d="M108 42 156 59v39c0 34-21 55-48 71-27-16-48-37-48-71V59z" fill="#49dca9" stroke="#c7ffed" stroke-width="7"/>
+    <path d="M108 59 143 71v27c0 23-14 39-35 53-21-14-35-30-35-53V71z" fill="#236e70"/>
+    <path d="m104 75 9 17 19 3-14 13 3 19-17-9-17 9 3-19-14-13 19-3z" fill="#fff3a6"/>
+    <rect x="82" y="151" width="52" height="8" fill="#55e3b2"/>
+    <text x="108" y="215" text-anchor="middle" fill="#fff2fa" font-family="Prompt,Arial,sans-serif" font-size="17" font-weight="700">SHIELD</text>
+    <text x="108" y="246" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">บล็อกการโจมตี 1 ครั้ง</text>
+    <text x="108" y="267" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">ภายใน 2 วินาที</text>
+  </g>
+  <g transform="translate(734 78)">
+    <rect width="216" height="318" rx="12" fill="#24294e" stroke="#ffd66e" stroke-width="3"/>
+    <path d="M108 43 154 60v37c0 31-19 51-46 67-27-16-46-36-46-67V60z" fill="#47bdd0" stroke="#c3fbff" stroke-width="7"/>
+    <path d="M108 60 141 72v25c0 20-12 36-33 49-21-13-33-29-33-49V72z" fill="#235a83"/>
+    <path d="M91 99h40v-15l24 25-24 25v-15H91z" fill="#ffe27c" stroke="#fff4bc" stroke-width="4"/>
+    <rect x="82" y="151" width="52" height="8" fill="#ffd66e"/>
+    <text x="108" y="215" text-anchor="middle" fill="#fff2fa" font-family="Prompt,Arial,sans-serif" font-size="17" font-weight="700">REFLECT</text>
+    <text x="108" y="246" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">สะท้อนการโจมตีกลับ</text>
+    <text x="108" y="267" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">ผู้โจมตี 1 ครั้ง</text>
+  </g>
+  <g transform="translate(968 78)">
+    <rect width="200" height="318" rx="12" fill="#24294e" stroke="#ffad6e" stroke-width="3"/>
+    <rect x="52" y="130" width="96" height="29" fill="#b75c52" stroke="#ffe1b5" stroke-width="6"/>
+    <rect x="62" y="119" width="76" height="11" fill="#ffad6e"/>
+    <path d="M94 123V72h13v51z" fill="#e9f3ff" stroke="#fff" stroke-width="4"/>
+    <rect x="89" y="61" width="23" height="24" fill="#ff6d77" stroke="#ffe3a6" stroke-width="4"/>
+    <path d="m108 76 26-26m-17 28 31-10M83 76 59 53" stroke="#ffda66" stroke-width="7"/>
+    <circle cx="101" cy="118" r="11" fill="#63e2bd" stroke="#d5fff1" stroke-width="4"/>
+    <path d="M68 171h68" stroke="#ffad6e" stroke-width="7"/>
+    <text x="100" y="215" text-anchor="middle" fill="#fff2fa" font-family="Prompt,Arial,sans-serif" font-size="17" font-weight="700">SWITCH / LEVER</text>
+    <text x="100" y="246" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">กดใช้ที่จุดบนฉาก</text>
+    <text x="100" y="267" text-anchor="middle" fill="#c6c9e9" font-family="Prompt,Arial,sans-serif" font-size="13">รบกวน 2 วินาที</text>
+  </g>
+</svg>

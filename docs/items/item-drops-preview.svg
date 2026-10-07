@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc" shape-rendering="crispEdges">
+  <title id="title">KUHU NET — dropped item icons</title>
+  <desc id="desc">Small glowing pixel-art pickup icons shown on the game floor, each with a short label.</desc>
+  <defs>
+    <pattern id="tiles" width="56" height="56" patternUnits="userSpaceOnUse">
+      <rect width="56" height="56" fill="#e8e2f6"/><path d="M0 0h56v56H0z" fill="none" stroke="#d9d0ed" stroke-width="2"/>
+      <path d="M8 10h5m29 33h7M22 28h3" stroke="#c7bddf" stroke-width="3"/>
+    </pattern>
+    <filter id="soft"><feGaussianBlur stdDeviation="9"/></filter>
+  </defs>
+  <rect width="1200" height="360" rx="20" fill="url(#tiles)"/>
+  <rect x="18" y="18" width="1164" height="324" rx="16" fill="none" stroke="#342d5d" stroke-width="4"/>
+  <text x="48" y="55" fill="#342d5d" font-family="Prompt,Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="2">PICKUPS ON FLOOR / LEVER SCENE POINT</text>
+  <g transform="translate(120 0)">
+    <ellipse cx="0" cy="192" rx="65" ry="23" fill="#e752a6" opacity=".34" filter="url(#soft)"/><ellipse cx="0" cy="196" rx="42" ry="12" fill="#70648e" opacity=".3"/>
+    <path d="M-27 132h54v49h-54z" fill="#11172f" stroke="#f27fc4" stroke-width="6"/><path d="M-18 144h29m-29 12h38m-38 12h20" stroke="#ffc4e9" stroke-width="5"/><path d="m13 138 12 12m0-12-12 12" stroke="#fff" stroke-width="4"/>
+    <path d="M-10 121h20v7h-20z" fill="#f27fc4"/><path d="M-9 124h18" stroke="#fff" stroke-width="3"/>
+    <text x="0" y="257" text-anchor="middle" fill="#342d5d" font-family="Prompt,Arial,sans-serif" font-size="16" font-weight="700">ERASE</text>
+  </g>
+  <g transform="translate(360 0)">
+    <ellipse cx="0" cy="192" rx="65" ry="23" fill="#ad69ff" opacity=".38" filter="url(#soft)"/><ellipse cx="0" cy="196" rx="42" ry="12" fill="#70648e" opacity=".3"/>
+    <path d="M-26 132h52v49h-52z" fill="#171b3d" stroke="#ae80ff" stroke-width="6"/><path d="M-17 145h23m-23 11h34m-34 11h17" stroke="#9df5ea" stroke-width="5"/><path d="m9 141 11 0-6 12 10 0-17 18 4-13-9 0z" fill="#ffe06c"/>
+    <path d="M-38 147h10m56 24h10" stroke="#fb74b7" stroke-width="5"/>
+    <text x="0" y="257" text-anchor="middle" fill="#342d5d" font-family="Prompt,Arial,sans-serif" font-size="16" font-weight="700">GLITCH</text>
+  </g>
+  <g transform="translate(600 0)">
+    <ellipse cx="0" cy="192" rx="65" ry="23" fill="#48d9a5" opacity=".4" filter="url(#soft)"/><ellipse cx="0" cy="196" rx="42" ry="12" fill="#70648e" opacity=".3"/>
+    <path d="M0 124 34 136v24c0 23-15 37-34 49-19-12-34-26-34-49v-24z" fill="#49dca9" stroke="#e0fff3" stroke-width="6"/><path d="M0 138 22 146v14c0 15-9 25-22 34-13-9-22-19-22-34v-14z" fill="#276f72"/><path d="m0 145 5 11 12 2-9 8 2 12-10-6-10 6 2-12-9-8 12-2z" fill="#fff3a6"/>
+    <text x="0" y="257" text-anchor="middle" fill="#342d5d" font-family="Prompt,Arial,sans-serif" font-size="16" font-weight="700">SHIELD</text>
+  </g>
+  <g transform="translate(840 0)">
+    <ellipse cx="0" cy="192" rx="65" ry="23" fill="#54cce0" opacity=".42" filter="url(#soft)"/><ellipse cx="0" cy="196" rx="42" ry="12" fill="#70648e" opacity=".3"/>
+    <path d="M0 124 34 136v24c0 23-15 37-34 49-19-12-34-26-34-49v-24z" fill="#48bfd1" stroke="#e0fcff" stroke-width="6"/><path d="M0 138 22 146v14c0 15-9 25-22 34-13-9-22-19-22-34v-14z" fill="#245d88"/><path d="M-17 153h31v-10l18 17-18 17v-10h-31z" fill="#ffe277" stroke="#fff6cf" stroke-width="3"/>
+    <text x="0" y="257" text-anchor="middle" fill="#342d5d" font-family="Prompt,Arial,sans-serif" font-size="16" font-weight="700">REFLECT</text>
+  </g>
+  <g transform="translate(1080 0)">
+    <ellipse cx="0" cy="192" rx="65" ry="23" fill="#ffad6e" opacity=".42" filter="url(#soft)"/><ellipse cx="0" cy="196" rx="42" ry="12" fill="#70648e" opacity=".3"/>
+    <path d="M-34 158h68v22h-68z" fill="#b75c52" stroke="#ffe0ad" stroke-width="5"/><path d="M-21 151h42v7h-42z" fill="#ffb16e"/><path d="M-4 151v-39h10v39z" fill="#f3f5ff" stroke="#fff" stroke-width="3"/><path d="M-9 105h20v21H-9z" fill="#ff6c78" stroke="#ffe59b" stroke-width="3"/><circle cx="1" cy="148" r="8" fill="#64e0bb" stroke="#e5fff6" stroke-width="3"/>
+    <text x="0" y="257" text-anchor="middle" fill="#342d5d" font-family="Prompt,Arial,sans-serif" font-size="16" font-weight="700">LEVER POINT</text>
+  </g>
+  <text x="600" y="309" text-anchor="middle" fill="#665c86" font-family="Prompt,Arial,sans-serif" font-size="14">4 ไอคอนแรกเป็นของเก็บ · Lever เป็นจุดถาวรบนฉาก · เข้าใกล้แล้วกด E เพื่อใช้</text>
+</svg>

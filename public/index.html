@@ -24,6 +24,44 @@
     </div>
   </section>
 
+  <!-- 2) Game mode selection preview -->
+  <section id="screen-mode" class="screen" aria-label="เลือกโหมดเกม">
+    <div class="mode-shell">
+      <header class="mode-header">
+        <span class="mode-kicker">KUHU NET · NETWORK ARENA</span>
+        <h1>เลือกโหมดการเล่น</h1>
+        <p>เลือกสนามแข่งขันของคุณ — ทั้งสองโหมดรองรับผู้เล่น 4 คน</p>
+      </header>
+      <div class="mode-grid">
+        <button class="mode-card mode-ffa" data-mode-card="ffa" aria-pressed="false">
+          <span class="mode-number">01</span>
+          <span class="mode-art ffa-art" aria-hidden="true"><i>1</i><i>2</i><i>3</i><i>4</i></span>
+          <span class="mode-tag">แข่งขันเดี่ยว</span>
+          <strong>FREE FOR ALL</strong>
+          <span class="mode-subtitle">4 คน · ใครไวคนนั้นชนะ</span>
+          <span class="mode-copy">ทุกคนแก้โจทย์เดียวกัน แข่งทำภารกิจให้สำเร็จก่อน พร้อมดูความคืบหน้าของคู่แข่ง</span>
+          <span class="mode-status active-mode"><i></i> เปิดให้เล่นแล้ว</span>
+        </button>
+        <button class="mode-card mode-team" data-mode-card="team" aria-pressed="false">
+          <span class="mode-number">02</span>
+          <span class="mode-art team-art" aria-hidden="true"><i>A1</i><i>A2</i><b>VS</b><i>B1</i><i>B2</i></span>
+          <span class="mode-tag">ประสานทีม</span>
+          <strong>TEAM BATTLE</strong>
+          <span class="mode-subtitle">2 vs 2 · ร่วมมือเพื่อชัยชนะ</span>
+          <span class="mode-copy">ช่วยกันแก้ระบบในทีม มองเห็นสถานะของทั้งสองทีม แล้วชิงทำเป้าหมายให้สำเร็จ</span>
+          <span class="mode-status active-mode"><i></i> เปิดให้เล่นแล้ว</span>
+        </button>
+      </div>
+      <div class="mode-footer">
+        <span id="mode-detail" aria-live="polite">เลือกการ์ดเพื่อดูรายละเอียดโหมด</span>
+        <button class="btn ghost" id="mode-back">← กลับหน้าปก</button>
+        <button class="btn teal big" id="mode-ffa">เล่น Free for All</button>
+        <button class="btn yellow big" id="mode-team">เล่นทีม 2v2</button>
+        <button class="btn green big" id="mode-coop">เล่นโหมดร่วมมือเดิม · 2 คน</button>
+      </div>
+    </div>
+  </section>
+
   <!-- 2) Loading -->
   <section id="screen-loading" class="screen" aria-label="กำลังโหลด">
     <div class="loading-box">
@@ -37,6 +75,7 @@
   <section id="screen-lobby" class="screen" aria-label="เข้าร่วมห้อง">
     <div class="panel lobby-panel">
       <div class="panel-title pink">เข้าร่วมเครือข่าย</div>
+      <div class="mode-room-note" id="lobby-mode-note"></div>
       <label class="field">ชื่อผู้เล่น
         <input id="player-name" maxlength="16" autocomplete="off" placeholder="เช่น NODE_01">
       </label>
@@ -70,6 +109,10 @@
       <div class="slots">
         <div class="slot" id="slot-A"></div>
         <div class="slot" id="slot-B"></div>
+        <div class="slot ffa-slot hidden" id="slot-P1"></div>
+        <div class="slot ffa-slot hidden" id="slot-P2"></div>
+        <div class="slot ffa-slot hidden" id="slot-P3"></div>
+        <div class="slot ffa-slot hidden" id="slot-P4"></div>
       </div>
       <div class="room-actions">
         <button class="btn ghost" id="room-leave">ออกจากห้อง</button>
@@ -133,6 +176,7 @@
                 <div class="term-head">
                   <span class="term-title">&gt;_ <b id="term-device">-</b> <small id="term-step"></small></span>
                   <span class="title-actions">
+                    <span class="ffa-role-switch hidden" id="ffa-role-switch" aria-label="เลือกเครือข่าย"><button type="button" data-ffa-role="A" class="active">ระบบ A</button><button type="button" data-ffa-role="B">ระบบ B</button></span>
                     <button class="term-btn" id="term-help">/help</button>
                     <button class="term-btn" id="term-clear">clear</button>
                     <button class="term-btn close" id="term-close" aria-label="ปิดเทอร์มินัล กลับไปเดิน">✕ Esc</button>
@@ -209,6 +253,11 @@
               <div class="door" id="dio-link"><span class="door-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span>ประตูล็อก</span></div>
               <div class="who B" id="dio-B"></div>
             </div>
+          </div>
+
+          <div class="side-card progress-card" aria-live="polite" aria-label="ความคืบหน้าของผู้เล่น">
+            <h3 class="card-title">ความคืบหน้าผู้เล่น <small>อัปเดตผ่านเซิร์ฟเวอร์</small></h3>
+            <div id="stage-progress"></div>
           </div>
 
           <div class="side-card mission-card">

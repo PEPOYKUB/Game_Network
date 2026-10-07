@@ -9,6 +9,7 @@ import { Terminal } from './terminal.js';
 import { renderDocs, renderMission, renderForm } from './docs.js';
 import { renderConfetti } from './confetti.js';
 import { makeWindow, front, resetAllWindows, setPinned, setRemember, windowClosed } from './windows.js';
+import { initMatchHud, isComp } from './match-hud.js';
 
 // Team contact shown in Settings (wireframe 1.2.3). Leave url empty to show the label only.
 const CONTACT = { label: 'Facebook · KUHU NET', url: '' };
@@ -26,6 +27,7 @@ const S = {
   screen: 'cover',
   loaded: false,
   playerId: session.get('kuhu.player') || newId(),
+  selectedMode: 'coop',
   code: session.get('kuhu.code'),
   you: null,
   room: null,
@@ -67,7 +69,7 @@ function route() {
     closeModal('modal-clear');
     show('select');
     renderSelect();
-  } else if (phase === 'play') {
+  } else if (phase === 'play' || phase === 'ended') {
     show('game');
     renderGame();
   }
@@ -78,8 +80,8 @@ function initCover() {
   $$('.sprite-btn').forEach((b) => b.addEventListener('mouseenter', () => sfx.hover()));
   $('#cover-start').onclick = () => {
     unlockAudio();
-    sfx.start();
-    boot();
+    sfx.click();
+    show('mode');
   };
   $('#cover-settings').onclick = () => {
     unlockAudio();
@@ -91,6 +93,33 @@ function initCover() {
     sfx.click();
     openModal('modal-howto');
   };
+}
+
+function setModeNote() {
+  $('#lobby-mode-note').textContent = S.selectedMode === 'team' ? 'โหมดทีม 2v2 · ผู้เล่น 4 คน แบ่ง 2 ทีม' : isComp(S.selectedMode) ? 'โหมด Free for All · ห้องนี้รองรับผู้เล่น 4 คน แข่งขันแยกสถานะ' : 'โหมดร่วมมือ · ผู้เล่น 2 คน แบ่งห้อง A และ B';
+}
+
+function initModeSelect() {
+  const descriptions = {
+    ffa: 'FFA: ผู้เล่น 4 คนเริ่มจากโจทย์เดียวกัน แข่งขันแยกกัน และดูความคืบหน้าของทุกคนได้',
+    team: 'TEAM BATTLE: 4 คนแบ่งเป็น 2 ทีม ทีมละ 2 คน ร่วมมือกันแก้โจทย์และแข่งกับอีกทีม',
+  };
+  $$('[data-mode-card]').forEach((card) => {
+    card.onclick = () => {
+      sfx.click();
+      $$('[data-mode-card]').forEach((other) => {
+        const selected = other === card;
+        other.classList.toggle('selected', selected);
+        other.setAttribute('aria-pressed', String(selected));
+      });
+      S.selectedMode = card.dataset.modeCard;
+      $('#mode-detail').textContent = descriptions[card.dataset.modeCard];
+    };
+  });
+  $('#mode-back').onclick = () => { sfx.click(); show('cover'); };
+  $('#mode-ffa').onclick = () => { S.selectedMode = 'ffa'; setModeNote(); sfx.start(); boot(); };
+  $('#mode-coop').onclick = () => { S.selectedMode = 'coop'; setModeNote(); sfx.start(); boot(); };
+  $('#mode-team').onclick = () => { S.selectedMode = 'team'; setModeNote(); sfx.start(); boot(); };
 }
 
 // ---------------------------------------------------------------- loading (wireframe 2)
@@ -152,6 +181,7 @@ async function boot() {
 function initLobby() {
   const nameInput = $('#player-name');
   nameInput.value = local.get('kuhu.name') || `NODE_${String(Math.floor(Math.random() * 90) + 10)}`;
+  setModeNote();
   const boxes = $$('#code-input input');
   boxes.forEach((box, idx) => {
     box.addEventListener('input', () => {
@@ -179,7 +209,7 @@ function initLobby() {
   $('#btn-create').onclick = async () => {
     sfx.click();
     msg('');
-    const res = await send('room:create', { name: name(), playerId: S.playerId, sample: $('#opt-sample').checked, unlockAll: $('#opt-unlock').checked });
+    const res = await send('room:create', { name: name(), playerId: S.playerId, mode: S.selectedMode, sample: $('#opt-sample').checked, unlockAll: $('#opt-unlock').checked });
     if (!res.ok) return msg(res.error);
     S.code = res.code;
     S.you = res.role;
@@ -223,13 +253,18 @@ function charCanvas(charId, walk = true, cls = '') {
 function renderRoom() {
   const room = S.room;
   $('#room-code').textContent = room.code;
-  for (const role of ['A', 'B']) {
+  const ffa = isComp(room.mode);
+  const roles = ffa ? ['P1', 'P2', 'P3', 'P4'] : ['A', 'B'];
+  $('#screen-room').classList.toggle('room-ffa', ffa);
+  $('#room-start').textContent = room.mode === 'team' ? 'เริ่มการแข่งขัน 2v2' : ffa ? 'เริ่มการแข่งขัน FFA' : 'เริ่ม';
+  for (const role of ['A', 'B', 'P1', 'P2', 'P3', 'P4']) $(`#slot-${role}`).classList.toggle('hidden', !roles.includes(role));
+  for (const role of roles) {
     const p = room.players[role];
     const slot = $(`#slot-${role}`);
     slot.className = `slot ${role} ${p ? '' : 'waiting'}`;
     const mine = role === S.you;
     const status = !p ? null : !p.connected ? ['away', 'หลุดการเชื่อมต่อ'] : p.ready ? ['on', 'พร้อม'] : ['', 'ไม่พร้อม'];
-    const head = el('div', { class: 'slot-head' }, el('span', {}, `ห้อง ${role}${mine ? ' (คุณ)' : ''}`), status && el('span', { class: 'slot-status' }, el('i', { class: `dot ${status[0]}` }), status[1]));
+    const head = el('div', { class: 'slot-head' }, el('span', {}, `${ffa ? 'ผู้เล่น' : 'ห้อง'} ${role}${mine ? ' (คุณ)' : ''}`), status && el('span', { class: 'slot-status' }, el('i', { class: `dot ${status[0]}` }), status[1]));
     if (!p) {
       fill(slot, head, el('div', {}, 'รอผู้เล่นเข้าร่วม', el('span', { class: 'wait-dots' })), el('div', { class: 'slot-role' }, `ส่งเลขห้อง ${room.code} ให้เพื่อน`));
       continue;
@@ -245,7 +280,10 @@ function renderRoom() {
       charCanvas(p.charId),
       el('div', { class: 'slot-name' }, p.name),
       el('div', { class: 'slot-char' }, charName(p.charId)),
-      el('div', { class: 'slot-role' }, ROLE_TEXT[role]),
+      el('div', { class: 'slot-role' }, room.mode === 'team' ? `ทีม ${p.teamId}` : ffa ? 'แข่งขันเดี่ยว · ควบคุมระบบ A และ B' : ROLE_TEXT[role]),
+      mine && room.mode === 'team' && el('div', { class: 'slot-controls team-pick' },
+        ...['T1', 'T2'].map((t) => el('button', { class: `btn tiny ${p.teamId === t ? 'teal' : 'ghost'}`, 'data-team': t, disabled: p.ready || p.teamId === t,
+          onclick: async () => { sfx.click(); const res = await send('lobby:team', { teamId: t }); if (!res.ok) toast(res.error || 'เปลี่ยนทีมไม่ได้', true); } }, `เข้าทีม ${t}`))),
       mine &&
         el(
           'div',
@@ -257,9 +295,11 @@ function renderRoom() {
         ),
     );
   }
-  const both = ['A', 'B'].every((r) => room.players[r]?.ready && room.players[r]?.connected);
-  $('#room-start').disabled = !both;
-  $('#room-msg').textContent = both ? '' : !room.players.A || !room.players.B ? 'รอผู้เล่นอีกคน...' : 'ทั้งสองคนต้องกด "พร้อม!" ก่อนเริ่ม';
+  const teamsOk = room.mode !== 'team' || ['T1', 'T2'].every((t) => (room.teams?.[t] || []).length === 2);
+  const full = teamsOk && roles.every((r) => room.players[r]?.ready && room.players[r]?.connected);
+  $('#room-start').disabled = !full;
+  $('#room-swap').classList.toggle('hidden', ffa);
+  $('#room-msg').textContent = full ? '' : !teamsOk ? 'แบ่งทีมให้ได้ทีมละ 2 คนก่อน (กดปุ่ม "เข้าทีม")' : `รอผู้เล่นครบ ${roles.length} คน และให้ทุกคนกด "พร้อม!"`;
 }
 
 function initRoom() {
@@ -310,6 +350,7 @@ async function renderSelect() {
   if (!S.room || S.room.phase !== 'select') return;
   const room = S.room;
   const cleared = room.progress.cleared;
+  $('.team-panel .panel-title').textContent = isComp(room.mode) ? 'ผู้เล่นในการแข่งขัน' : 'ทีมของคุณ';
   const done = Object.keys(cleared).length;
   $('#select-sub').textContent = `ห้อง #${room.code} · ผ่านแล้ว ${done}/12${room.options.sample ? ' · ข้อมูลตัวอย่าง' : ''}`;
   fill($('#stage-list'), 
@@ -334,10 +375,12 @@ async function renderSelect() {
   );
   const total = Object.values(cleared).reduce((a, c) => a + c.score, 0);
   const time = Object.values(cleared).reduce((a, c) => a + c.time, 0);
+  const rosterRoles = isComp(room.mode) ? ['P1', 'P2', 'P3', 'P4'] : ['A', 'B'];
   fill($('#team-box'), 
-    ...['A', 'B'].map((r) => {
+    ...rosterRoles.map((r) => {
       const p = room.players[r];
-      return el('div', { class: 'team-row' }, p && charCanvas(p.charId, false), el('div', {}, el('b', {}, p ? p.name : '(ว่าง)'), el('div', {}, el('i', { class: `dot ${p?.connected ? 'on' : 'away'}` }), ` ห้อง ${r}${r === S.you ? ' · คุณ' : ''}`)));
+      const result = room.ffaResults?.[r];
+      return el('div', { class: 'team-row' }, p && charCanvas(p.charId, false), el('div', {}, el('b', {}, p ? p.name : '(ว่าง)'), el('div', {}, el('i', { class: `dot ${p?.connected ? 'on' : 'away'}` }), ` ${isComp(room.mode) ? 'ผู้เล่น' : 'ห้อง'} ${r}${r === S.you ? ' · คุณ' : ''}`), result && el('small', {}, `อันดับ ${result.rank} · ${result.score} คะแนน`)));
     }),
     el('div', { class: 'team-total' }, el('span', {}, `ผ่าน ${done}/12 ด่าน · ${fmtTime(time)}`), el('span', {}, `${total} คะแนน`)),
     room.progress.finalCode && el('div', { class: 'final-code', style: 'font-size:14px;margin-top:10px' }, room.progress.finalCode),
@@ -381,9 +424,9 @@ function initGameComponents() {
     onInput: (input) => fire('player:move', input),
     // Floating HUD cards on the map: the E markers move out from under them.
     avoid: () => ['.hud-stage', '.hud-keys', '#dio-prompt', '#dio-banner:not(.hidden)'].map((q) => $(q)).filter((n) => n && n.offsetParent).map((n) => n.getBoundingClientRect()),
-    onInteract: async (near) => {
-      if (!near) return toast('เดินเข้าใกล้คอมพิวเตอร์ของห้องคุณก่อน แล้วกด E', true);
-      const res = await send('player:interact', { open: true });
+    onInteract: async (near, side) => {
+      if (!near) return toast('เดินเข้าใกล้คอมพิวเตอร์ที่มีสัญลักษณ์ E แล้วกด E', true);
+      const res = await send('player:interact', { open: true, role: side });
       if (!res.ok) toast(res.error || 'เปิด Terminal ไม่ได้', true);
       else setTerminalOpen(res.open);
       return undefined;
@@ -393,7 +436,7 @@ function initGameComponents() {
       if (prompt) { prompt.textContent = text; prompt.classList.toggle('ready', near); }
     },
   });
-  S.dio.setRole(S.you);
+  S.dio.setRole(isComp(S.room?.mode) ? 'A' : S.you);
   window.__dio = S.dio; // read by the local QA scripts
   S.term = new Terminal({
     root: $('#term'),
@@ -403,7 +446,7 @@ function initGameComponents() {
     suggest: $('#term-suggest'),
     chips: $('#term-chips'),
     form: $('#term-form'),
-    onExec: (line) => send('term:exec', { line }),
+    onExec: (line) => send('term:exec', { line, role: S.view?.role }),
     onTyping: () => {
       if (Date.now() - S.typingSent > 3000) {
         S.typingSent = Date.now();
@@ -537,6 +580,12 @@ const pad2 = (n) => String(n).padStart(2, '0');
 // Team card: portrait, name and what each player is doing. Rebuilt only when
 // something visible changes, since player packets arrive many times a second.
 function renderTeam() {
+  const teamCard = $('.team-card');
+  if (isComp(S.room?.mode)) {
+    teamCard.classList.add('hidden');
+    return;
+  }
+  teamCard.classList.remove('hidden');
   const players = S.room?.players || {};
   const sig = JSON.stringify(['A', 'B'].map((r) => players[r] && [players[r].name, players[r].charId, players[r].connected, players[r].terminal]).concat(S.you));
   if (sig === S.teamSig) return;
@@ -563,6 +612,7 @@ function renderGame() {
   if (newStage) {
     S.stageKey = key;
     S.formJson = '';
+    S.ffaRank = null;
     S.hintOpen = new Set();
     setTab('mission');
     closePanels(false);
@@ -572,13 +622,15 @@ function renderGame() {
     $('#dio-banner').classList.add('hidden');
   }
   S.dio.setStage(run.stageId, key);
-  S.dio.setRole(S.you);
+  const visualRole = isComp(room.mode) ? 'A' : S.you;
+  S.dio.setRole(visualRole);
   const level = levelForStage(run.stageId);
   const screen = $('#screen-game');
+  $('#term-close').classList.remove('hidden');
   screen.style.setProperty('--level-art', `url("${level.file}")`);
   screen.style.setProperty('--map-ar', String(level.width / level.height));
-  screen.classList.toggle('role-A', S.you === 'A');
-  screen.classList.toggle('role-B', S.you === 'B');
+  screen.classList.toggle('role-A', visualRole === 'A');
+  screen.classList.toggle('role-B', visualRole === 'B');
   S.dio.setActive(true);
   const m = run.meta;
   $('#tb-num').textContent = `${pad2(m.id)}/12`;
@@ -591,25 +643,33 @@ function renderGame() {
   const penalty = run.hints.reduce((a, h) => a + h.penalty, 0);
   $('#tb-hints').textContent = penalty ? `−${penalty} คะแนน` : '0 คะแนน';
   const online = run.link === 'ONLINE';
+  $('.hud-keys')?.classList.remove('hidden');
+  $('#dio-prompt').textContent = isComp(room.mode)
+    ? 'FFA · เดินไปใช้คอมพิวเตอร์ A หรือ B · ตำแหน่งผู้เล่นอัปเดตผ่านเครือข่าย'
+    : 'เดินไปยังคอมพิวเตอร์ที่มีสัญลักษณ์ E';
   const door = $('#dio-link');
   door.classList.toggle('online', online);
   door.lastElementChild.textContent = online ? 'ประตูเปิดแล้ว' : 'ประตูล็อก';
   door.title = online ? 'เดินหากันได้แล้ว' : 'ประตูจะเปิดเมื่อผ่านเงื่อนไขของด่าน';
   renderTeam();
-  S.dio.setPlayers(room.players);
+  renderStageProgress(room.stageProgress);
+  const scenePlayers = room.players;
+  const ownPlayer = room.players[S.you];
+  S.dio.setMode(room.mode, S.you, ownPlayer?.roomSide || 'A');
+  S.dio.setPlayers(scenePlayers);
   S.dio.setOnline(online);
-  S.dio.receive({ key, online, players: room.players });
+  S.dio.receive({ key, online, players: scenePlayers });
   setTerminalOpen(Boolean(room.players[S.you]?.terminal));
-  const partner = room.players[S.you === 'A' ? 'B' : 'A'];
+  const partner = isComp(room.mode) ? null : room.players[S.you === 'A' ? 'B' : 'A'];
   const chatOnline = $('#chat-online');
-  chatOnline.classList.toggle('away', !partner?.connected);
-  chatOnline.lastChild.textContent = partner?.connected ? ' ออนไลน์' : ' ออฟไลน์';
+  chatOnline.classList.toggle('away', !isComp(room.mode) && !partner?.connected);
+  chatOnline.lastChild.textContent = isComp(room.mode) ? ' FFA' : partner?.connected ? ' ออนไลน์' : ' ออฟไลน์';
   const banner = $('#dio-banner');
   if (partner && !partner.connected) {
     banner.textContent = `${partner.name} หลุดการเชื่อมต่อ — รอกลับเข้าห้อง #${room.code}`;
     banner.classList.remove('hidden');
     banner.onclick = null;
-  } else if (run.result) {
+  } else if (run.result && !isComp(room.mode)) {
     banner.textContent = 'ผ่านด่านแล้ว! คลิกเพื่อดูคะแนน';
     banner.classList.remove('hidden');
     banner.onclick = () => showClear(run);
@@ -618,15 +678,41 @@ function renderGame() {
   }
   renderHints(run);
   if (S.view && S.view.stageId === run.stageId) renderMissionTab(run, S.view);
-  if (run.result && S.clearShown !== key) {
+  // Competitive matches show their own standings overlay (match-hud.js) instead of the co-op clear sheet.
+  if (run.result && S.clearShown !== key && !isComp(room.mode)) {
     S.clearShown = key;
     showClear(run);
   }
 }
 
+function renderStageProgress(progress) {
+  const host = $('#stage-progress');
+  if (!host) return;
+  if (!progress || progress.stageId !== S.room?.run?.stageId) {
+    fill(host, el('p', { class: 'progress-empty' }, 'เริ่มด่านเพื่อดูความคืบหน้า'));
+    return;
+  }
+  const roles = isComp(S.room?.mode) ? ['P1', 'P2', 'P3', 'P4'] : ['A', 'B'];
+  fill(host, ...roles.map((role) => {
+    const player = S.room?.players?.[role];
+    const p = progress.players?.[role];
+    if (!p) return el('div', { class: 'progress-player' }, `ห้อง ${role} · รอข้อมูล`);
+    const title = `${player?.name || `ห้อง ${role}`}${role === S.you ? ' · คุณ' : ''}`;
+    const rank = S.room?.ffaResults?.[role]?.rank;
+    const status = player?.connected === false ? 'ออฟไลน์' : p.complete ? `ผ่านด่านแล้ว${rank ? ` · อันดับ ${rank}` : ''}` : 'กำลังทำภารกิจ';
+    return el('div', { class: `progress-player${role === S.you ? ' self' : ''}` },
+      el('div', { class: 'progress-heading' }, el('b', {}, title), el('span', { class: player?.connected === false ? 'progress-away' : '' }, status)),
+      el('div', { class: 'progress-metrics' },
+        el('span', {}, `การกระทำ ${p.actions}`),
+        el('span', {}, `ตั้งค่า ${p.configurations}`),
+        el('span', {}, `ตรวจผ่าน ${p.verifications}`)),
+    );
+  }));
+}
+
 function renderMissionTab(run, view) {
   const me = S.room?.players?.[S.you];
-  renderMission($('#tab-mission'), run, view, S.you, {
+  renderMission($('#tab-mission'), run, view, isComp(S.room?.mode) ? view.role : S.you, {
     portrait: me && charCanvas(me.charId, false, 'portrait'),
     checks: S.checks,
     checkKey: S.stageKey,
@@ -672,7 +758,7 @@ function hintMiniMap(stageId) {
     const k = canvas.width / level.width;
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
     ctx.lineWidth = 3;
-    for (const s of level.stations[S.you] || []) {
+    for (const s of level.stations[isComp(S.room?.mode) ? (S.view?.role || 'A') : S.you] || []) {
       ctx.strokeStyle = '#ff4f9a';
       ctx.beginPath(); ctx.arc(s.screen.x * k, s.screen.y * k, 18, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#ffffffdd'; ctx.fillRect(s.x * k - 9, s.y * k - 9, 18, 18);
@@ -719,7 +805,10 @@ function renderHints(run) {
 }
 
 async function revealHint(level, penalty) {
-  const ok = await confirmBox(`เปิดคำใบ้ระดับ ${level}`, `คำใบ้นี้จะหัก ${penalty} คะแนนของทั้งทีม และทั้งสองห้องจะเห็นคำใบ้เดียวกัน`, `เปิดคำใบ้ (−${penalty})`);
+  const detail = isComp(S.room?.mode)
+    ? `คำใบ้นี้เป็นของคุณคนเดียวและจะหัก ${penalty} คะแนน`
+    : `คำใบ้นี้จะหัก ${penalty} คะแนนของทั้งทีม และทั้งสองห้องจะเห็นคำใบ้เดียวกัน`;
+  const ok = await confirmBox(`เปิดคำใบ้ระดับ ${level}`, detail, `เปิดคำใบ้ (−${penalty})`);
   if (!ok) return;
   const res = await send('hint:reveal', { level });
   if (!res.ok) toast(res.error || 'เปิดคำใบ้ไม่ได้', true);
@@ -730,6 +819,8 @@ function onView(view) {
   S.view = view;
   const run = S.room?.run;
   S.term?.setView(view, `${view.stageId}-${run?.startedAt ?? ''}`);
+  $('#ffa-role-switch').classList.toggle('hidden', !isComp(S.room?.mode));
+  $$('[data-ffa-role]').forEach((button) => button.classList.toggle('active', button.dataset.ffaRole === view.role));
   $('#term-device').textContent = view.device ? view.device.name : 'ไม่มีอุปกรณ์ (ถือเอกสาร)';
   $('#mon-device').textContent = view.device ? view.device.name : 'DOCS';
   renderDocs($('#tab-docs'), view);
@@ -740,7 +831,7 @@ function onView(view) {
     const wasLocked = S.formJson && !JSON.parse(S.formJson)?.enabled;
     S.formJson = formJson;
     renderForm($('#tab-report-body'), view, async (data) => {
-      const res = await send('form:submit', { data });
+      const res = await send('form:submit', { data, role: view.role });
       if (res.ok) sfx.ok();
       else sfx.err();
       return res;
@@ -774,14 +865,23 @@ function showClear(run) {
   final.classList.toggle('hidden', !r.finalCode);
   final.textContent = r.finalCode ? `FINAL CODE: ${r.finalCode}` : '';
   const id = run.stageId;
-  const nextOk = id < 12 && id + 1 <= S.room.progress.unlocked;
+  const nextOk = id < 12 && id + 1 <= S.room.progress.unlocked && (!isComp(S.room.mode) || S.room.phase === 'select');
   $('#clear-next').classList.toggle('hidden', !nextOk);
   $('#clear-next').onclick = () => startStage(id + 1);
-  $('#clear-title').textContent = id === 12 ? '🏆 INCIDENT CLEARED — SYSTEM LINK ONLINE' : 'SYSTEM LINK A ↔ B: ONLINE';
+  $('#clear-title').textContent = isComp(S.room.mode)
+    ? r.forfeited ? 'ออกจากการแข่งขัน FFA' : `🏁 ${S.room.mode === 'team' ? 'TEAM 2v2' : 'FFA'} FINISHED${S.ffaRank ? ` · อันดับ ${S.ffaRank}` : ''}`
+    : id === 12 ? '🏆 INCIDENT CLEARED — SYSTEM LINK ONLINE' : 'SYSTEM LINK A ↔ B: ONLINE';
   openModal('modal-clear');
 }
 
 function initGame() {
+  $$('[data-ffa-role]').forEach((button) => {
+    button.onclick = async () => {
+      if (!isComp(S.room?.mode) || button.dataset.ffaRole === S.view?.role) return;
+      const res = await send('stage:role', { role: button.dataset.ffaRole });
+      if (!res.ok) toast(res.error || 'สลับระบบไม่ได้', true);
+    };
+  });
   $$('.sheet-tabs .tab').forEach((t) => (t.onclick = () => { sfx.click(); setTab(t.dataset.tab); }));
   $('#term-help').onclick = () => S.term.run('/help');
   $('#term-clear').onclick = () => fill($('#term-out'), );
@@ -968,8 +1068,14 @@ function buildHowTo() {
 // ---------------------------------------------------------------- sockets
 socket.on('room:state', (st) => {
   const prevPhase = S.room?.phase;
+  S.matchHud?.update(st);
   S.room = st;
   S.you = st.you;
+  S.selectedMode = st.mode || 'coop';
+  if ($('#lobby-mode-note')) $('#lobby-mode-note').textContent = st.mode === 'team' ? 'โหมดทีม 2v2 · ผู้เล่น 4 คน แบ่ง 2 ทีม'
+    : isComp(st.mode)
+    ? 'โหมด Free for All · ผู้เล่น 4 คนแข่งขันแยกสถานะ'
+    : 'โหมดร่วมมือ · ผู้เล่น 2 คน แบ่งห้อง A และ B';
   S.code = st.code;
   S.offset = st.now - Date.now();
   if (prevPhase === 'play' && st.phase !== 'play') {
@@ -979,9 +1085,15 @@ socket.on('room:state', (st) => {
   if (st.phase === 'select' && prevPhase !== 'select') S.catalog = null;
   route();
 });
+socket.on('room:progress', (progress) => {
+  if (!S.room || !isComp(S.room.mode) || !progress) return;
+  S.room.stageProgress = progress;
+  if (S.screen === 'game') renderStageProgress(progress);
+});
 socket.on('room:players', ({ players }) => {
   if (!S.room || !players) return;
   S.room.players = players;
+  if (isComp(S.room.mode)) S.dio?.setMode(S.room.mode, S.you, players[S.you]?.roomSide || 'A');
   S.dio?.setPlayers(players);
   S.dio?.receive({ key: stageKey(), online: S.room.run?.link === 'ONLINE', players });
   if (S.screen === 'game') renderTeam();
@@ -1010,7 +1122,8 @@ socket.on('chat:msg', (msg) => {
   }
 });
 socket.on('activity', ({ role, kind }) => S.dio?.activity(role, kind));
-socket.on('stage:complete', () => {
+socket.on('stage:complete', ({ rank } = {}) => {
+  if (rank) S.ffaRank = rank;
   sfx.clear();
   renderConfetti($('#confetti'));
 });
@@ -1045,6 +1158,8 @@ document.addEventListener('keydown', (e) => {
 });
 startSky($('#sky'));
 initCover();
+initModeSelect();
+S.matchHud = initMatchHud({ getRoom: () => S.room, getDio: () => S.dio, toast, onBackToSelect: () => fire('stage:quit') });
 initLobby();
 initRoom();
 initSelect();
