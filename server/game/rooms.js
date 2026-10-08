@@ -1,15 +1,23 @@
 // Room lifecycle (lobby → stage select → play) and every Socket.IO event the client uses.
-// Co-op rooms (mode "coop") are handled here unchanged; FFA / 2v2 rooms are delegated to competitive.js.
+// Co-op rooms (mode "coop") are handled here unchanged; FFA / 2v2 rooms are delegated to competitive.js
+// and solo practice rooms (mode "solo") to solo.js.
 import { randomInt, randomUUID } from 'node:crypto';
 import { stageCatalog, STAGES } from './stages/index.js';
-import { startRun, execute, submitForm, revealHint, roleView, publicRun, publicProgress } from './engine.js';
+import { startFreshRun, scenarioFingerprint, execute, submitForm, revealHint, roleView, publicRun, publicProgress } from './engine.js';
 import { scoreRun } from './scoring.js';
 import { recordTeam, topTeams } from './leaderboard.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from '../../public/js/world.js';
 import { createCompetitive, COMPETITIVE_MODES } from './competitive.js';
+import { createSolo } from './solo.js';
 
 export const CHARACTERS = ['ping', 'student-one', 'student-two', 'packet', 'router', 'switch', 'cache', 'byte'];
 const ROLES = ['A', 'B'];
+/** Test hook: override the co-op stage time limit (production uses each stage's minutes). */
+export const ROOM_CONFIG = { coopStageMs: null };
+export function configureRooms(overrides = {}) {
+  Object.assign(ROOM_CONFIG, overrides);
+}
+
 const EMPTY_ROOM_TTL = 10 * 60 * 1000;
 const rooms = new Map();
 
@@ -71,6 +79,7 @@ export function attachRooms(io) {
   };
 
   const complete = (room) => {
+    clearTimeout(room.stageTimer);
     const run = room.run;
     run.completedAt = Date.now();
     const score = scoreRun(run);
@@ -85,6 +94,58 @@ export function attachRooms(io) {
     io.to(room.code).emit('stage:complete', { stageId: run.stage.id, result: run.result });
   };
 
+  // Co-op retry vote: only connected players are eligible, so one player is not stuck waiting
+  // for a partner who closed the tab. A partner who reconnects before it completes must vote too.
+  const coopVoters = (room) => ROLES.filter((r) => room.slots[r]?.connected);
+  const coopRetryStatus = (room) => {
+    const eligible = coopVoters(room);
+    return { ok: true, waiting: true, count: eligible.filter((r) => room.retryVotes?.has(r)).length, total: eligible.length };
+  };
+  const settleCoopRetry = (room) => {
+    const votes = room.retryVotes;
+    if (!votes || room.phase !== 'ended' || !room.run?.result?.gameOver) return null;
+    const eligible = coopVoters(room);
+    for (const r of [...votes]) if (!eligible.includes(r)) votes.delete(r);
+    if (!eligible.length || !eligible.every((r) => votes.has(r))) {
+      if (votes.size) io.to(room.code).emit('stage:retry:vote', { count: votes.size, total: eligible.length });
+      return null;
+    }
+    io.to(room.code).emit('stage:retry:vote', { count: eligible.length, total: eligible.length, complete: true });
+    startCoopStage(room, room.run.stage.id);
+    return { ok: true, waiting: false, count: eligible.length, total: eligible.length };
+  };
+
+  const startCoopStage = (room, id) => {
+    const previousFingerprint = room.lastScenarioFingerprints?.get(id) || null;
+    room.run = startFreshRun(id, { sample: room.options.sample, previousFingerprint });
+    room.lastScenarioFingerprints ||= new Map();
+    room.lastScenarioFingerprints.set(id, scenarioFingerprint(room.run));
+    room.retryVotes = new Set();
+    clearTimeout(room.stageTimer);
+    room.stageTimer = setTimeout(() => {
+      if (room.phase !== 'play' || !room.run || room.run.result) return;
+      const now = Date.now();
+      room.run.completedAt = now;
+      const score = scoreRun(room.run);
+      room.run.result = { ...score, explanation: 'หมดเวลา — ความคืบหน้าของทีมถูกบันทึกไว้ แต่ยังทำด่านไม่สำเร็จ', timedOut: true, gameOver: true };
+      room.phase = 'ended';
+      room.retryVotes = new Set();
+      for (const role of ROLES) {
+        const p = room.slots[role];
+        if (p) { p.terminal = false; p.input = null; p.moving = false; }
+      }
+      system(room, `หมดเวลาด่าน ${room.run.stage.id} — Game Over · ทีมได้ ${score.total} คะแนนจากความคืบหน้า`);
+      io.to(room.code).emit('game:over', { stageId: room.run.stage.id, mode: 'coop' });
+      emitState(room);
+    }, Number(ROOM_CONFIG.coopStageMs) > 0 ? Number(ROOM_CONFIG.coopStageMs) : room.run.stage.minutes * 60_000);
+    room.stageTimer.unref?.();
+    for (const role of ROLES) if (room.slots[role]) Object.assign(room.slots[role], spawnPlayer(id, role));
+    room.phase = 'play';
+    system(room, `เริ่มด่าน ${id}: ${room.run.stage.title} — System Link A ↔ B: OFFLINE`);
+    emitState(room);
+    emitViews(room);
+  };
+
   const findRoom = (socket) => rooms.get(socket.data.code) || null;
   const cleanupLater = (room) => {
     clearTimeout(room.cleanupTimer);
@@ -94,8 +155,36 @@ export function attachRooms(io) {
   /** The competitive room this socket belongs to, or null for co-op / no room. */
   const competitive = (socket) => {
     const room = findRoom(socket);
-    return room && room.mode !== 'coop' ? room : null;
+    return room && COMPETITIVE_MODES.includes(room.mode) ? room : null;
   };
+  /** The solo practice room this socket belongs to, or null. */
+  const soloRoom = (socket) => {
+    const room = findRoom(socket);
+    return room && room.mode === 'solo' ? room : null;
+  };
+
+  const voiceEntries = (room) => (room.mode === 'coop'
+    ? ROLES.map((seat) => ({ seat, player: room.slots[seat] }))
+    : Object.keys(room.seats || {}).map((seat) => ({ seat, player: room.seats[seat] })));
+  const voiceSeatOf = (room, socket) => voiceEntries(room).find(({ player }) => player?.id === socket.data.playerId && player.socketId === socket.id)?.seat || null;
+  const voicePlayer = (room, seat) => room.mode === 'coop' ? room.slots[seat] : room.seats[seat];
+  const voicePairAllowed = (room, a, b) => {
+    if (!a?.voice?.active || !b?.voice?.active || !a.connected || !b.connected) return false;
+    if (room.mode !== 'team') return true;
+    const allows = (from, to) => from.voice.channel !== 'team' || from.teamId === to.teamId;
+    return allows(a, b) && allows(b, a);
+  };
+  const emitVoiceRoster = (room) => {
+    const members = voiceEntries(room).filter(({ player }) => player).map(({ seat, player }) => ({
+      seat, name: player.name, teamId: player.teamId || null, connected: Boolean(player.connected),
+      active: Boolean(player.voice?.active), channel: player.voice?.channel || 'room',
+      micEnabled: Boolean(player.voice?.micEnabled), speaking: Boolean(player.voice?.speaking),
+    }));
+    for (const { player } of voiceEntries(room)) {
+      if (player?.connected) io.to(player.socketId).emit('voice:roster', members);
+    }
+  };
+  const resetVoice = (player) => { if (player) player.voice = { active: false, micEnabled: false, channel: 'room', speaking: false }; };
 
   /**
    * Make `socket` the only connection that speaks for `player`. A previous socket of the same player
@@ -126,13 +215,14 @@ export function attachRooms(io) {
   };
 
   const comp = createCompetitive({ io, rooms, clean, characters: CHARACTERS, system, unlockedUpTo, cleanupLater, bindSocket });
+  const solo = createSolo({ io, clean, characters: CHARACTERS, unlockedUpTo, cleanupLater, bindSocket });
 
   io.on('connection', (socket) => {
     socket.data.execTimes = [];
 
     socket.on('room:create', (payload, ack) => {
       const playerId = clean(payload?.playerId, 64) || randomUUID();
-      const mode = COMPETITIVE_MODES.includes(payload?.mode) ? payload.mode : 'coop';
+      const mode = COMPETITIVE_MODES.includes(payload?.mode) || payload?.mode === 'solo' ? payload.mode : 'coop';
       const room = {
         mode,
         code: newCode(),
@@ -147,6 +237,7 @@ export function attachRooms(io) {
         cleanupTimer: null,
       };
       rooms.set(room.code, room);
+      if (mode === 'solo') return solo.create(socket, { ...payload, playerId }, ack, room);
       if (mode !== 'coop') return comp.create(socket, { ...payload, playerId }, ack, room);
       room.slots.A = { id: playerId, name: clean(payload?.name, 16) || 'PLAYER-A', charId: 'ping', ready: false, connected: true, socketId: socket.id, ...spawnPlayer(1, 'A') };
       const res = join(socket, room, room.slots.A, 'A');
@@ -160,6 +251,7 @@ export function attachRooms(io) {
       const room = rooms.get(code);
       if (!room) return ack?.({ ok: false, error: `ไม่พบห้องหมายเลข ${code || '-'}` });
       const playerId = clean(payload?.playerId, 64) || randomUUID();
+      if (room.mode === 'solo') return solo.join(socket, { ...payload, playerId }, ack, room);
       if (room.mode !== 'coop') return comp.join(socket, { ...payload, playerId }, ack, room);
       const existing = roleOf(room, playerId);
       if (existing) {
@@ -203,10 +295,19 @@ export function attachRooms(io) {
 
     socket.on('room:leave', () => {
       const c = competitive(socket);
-      if (c) return comp.leave(socket, c);
+      if (c) {
+        const p = voicePlayer(c, voiceSeatOf(c, socket));
+        resetVoice(p);
+        comp.leave(socket, c);
+        emitVoiceRoster(c);
+        return;
+      }
+      const so = soloRoom(socket);
+      if (so) return solo.leave(socket, so, rooms);
       const room = findRoom(socket);
       if (!room) return;
       const role = roleOf(room, socket.data.playerId);
+      resetVoice(role && room.slots[role]);
       socket.leave(room.code);
       socket.data.code = null;
       if (!role) return;
@@ -221,11 +322,14 @@ export function attachRooms(io) {
       for (const r of ROLES) if (room.slots[r]) room.slots[r].ready = false;
       system(room, `${name} ออกจากห้อง — รอผู้เล่นใหม่`);
       emitState(room);
+      emitVoiceRoster(room);
     });
 
     socket.on('lobby:character', (payload) => {
       const c = competitive(socket);
       if (c) return comp.character(socket, payload, c);
+      const so = soloRoom(socket);
+      if (so) return solo.character(socket, payload, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'lobby' || !CHARACTERS.includes(payload?.charId)) return;
@@ -233,9 +337,17 @@ export function attachRooms(io) {
       emitState(room);
     });
 
+    socket.on('lobby:color', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.color(socket, payload, c, ack);
+      return ack?.({ ok: false, error: 'เลือกสีได้เฉพาะในโหมด FFA' });
+    });
+
     socket.on('lobby:ready', (payload) => {
       const c = competitive(socket);
       if (c) return comp.ready(socket, payload, c);
+      const so = soloRoom(socket);
+      if (so) return undefined;
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'lobby') return;
@@ -246,6 +358,8 @@ export function attachRooms(io) {
     socket.on('lobby:swap', () => {
       const c = competitive(socket);
       if (c) return undefined;
+      const so = soloRoom(socket);
+      if (so) return undefined;
       const room = findRoom(socket);
       if (!room || room.phase !== 'lobby' || !roleOf(room, socket.data.playerId)) return;
       [room.slots.A, room.slots.B] = [room.slots.B, room.slots.A];
@@ -257,6 +371,8 @@ export function attachRooms(io) {
     socket.on('lobby:start', (_payload, ack) => {
       const c = competitive(socket);
       if (c) return comp.lobbyStart(socket, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.lobbyStart(socket, ack, so);
       const room = findRoom(socket);
       if (!room || !roleOf(room, socket.data.playerId)) return ack?.({ ok: false });
       const both = ROLES.every((r) => room.slots[r]?.connected && room.slots[r].ready);
@@ -269,12 +385,70 @@ export function attachRooms(io) {
     socket.on('lobby:team', (payload, ack) => {
       const room = findRoom(socket);
       if (!room) return ack?.({ ok: false, error: 'ไม่ได้อยู่ในห้อง' });
-      return comp.team(socket, payload, ack, room);
+      const result = comp.team(socket, payload, ack, room);
+      emitVoiceRoster(room);
+      return result;
+    });
+
+    socket.on('voice:settings', (payload, ack) => {
+      if (soloRoom(socket)) return ack?.({ ok: false, error: 'โหมดฝึกเล่นคนเดียวไม่มีแชทเสียง' });
+      const room = findRoom(socket);
+      const seat = room && voiceSeatOf(room, socket);
+      const player = seat && voicePlayer(room, seat);
+      if (!room || !player) return ack?.({ ok: false, error: 'ไม่ได้อยู่ในห้องเสียงนี้' });
+      const active = payload?.active !== false;
+      const channel = room.mode === 'team' && payload?.channel === 'team' ? 'team' : 'room';
+      player.voice = {
+        active,
+        channel,
+        micEnabled: active && Boolean(payload?.micEnabled),
+        speaking: active && Boolean(payload?.micEnabled) && Boolean(payload?.speaking),
+      };
+      emitVoiceRoster(room);
+      ack?.({ ok: true, active, channel, micEnabled: player.voice.micEnabled });
+    });
+
+    socket.on('voice:signal', (payload, ack) => {
+      if (soloRoom(socket)) return ack?.({ ok: false, error: 'โหมดฝึกเล่นคนเดียวไม่มีแชทเสียง' });
+      const room = findRoom(socket);
+      const fromSeat = room && voiceSeatOf(room, socket);
+      const from = fromSeat && voicePlayer(room, fromSeat);
+      const toSeat = clean(payload?.to, 4);
+      const validTarget = room && voiceEntries(room).some(({ seat }) => seat === toSeat);
+      const to = room && voicePlayer(room, toSeat);
+      const signal = payload?.signal;
+      const validSignal = signal && ((signal.description && ['offer', 'answer'].includes(signal.description.type))
+        || (signal.candidate && typeof signal.candidate.candidate === 'string'));
+      if (!room || !from || !validTarget || !to || !validSignal || !voicePairAllowed(room, from, to)) {
+        return ack?.({ ok: false, error: 'ส่งสัญญาณเสียงไปยังผู้เล่นนี้ไม่ได้' });
+      }
+      if (JSON.stringify(signal).length > 16_000) return ack?.({ ok: false, error: 'ข้อมูลสัญญาณเสียงใหญ่เกินไป' });
+      io.to(to.socketId).emit('voice:signal', { from: fromSeat, signal });
+      ack?.({ ok: true });
+    });
+
+    socket.on('voice:activity', (payload) => {
+      if (soloRoom(socket)) return;
+      const room = findRoom(socket);
+      const seat = room && voiceSeatOf(room, socket);
+      const player = seat && voicePlayer(room, seat);
+      if (!room || !player?.voice?.active || !player.voice.micEnabled) return;
+      const speaking = Boolean(payload?.speaking);
+      if (player.voice.speaking === speaking) return;
+      player.voice.speaking = speaking;
+      for (const { seat: targetSeat, player: target } of voiceEntries(room)) {
+        if (targetSeat !== seat && voicePairAllowed(room, player, target)) {
+          io.to(target.socketId).emit('voice:activity', { seat, speaking });
+        }
+      }
+      io.to(player.socketId).emit('voice:activity', { seat, speaking });
     });
 
     socket.on('stage:role', (payload, ack) => {
+      const so = soloRoom(socket);
+      if (so) return solo.role(socket, payload, ack, so);
       const c = competitive(socket);
-      if (!c) return ack?.({ ok: false, error: 'ใช้ได้เฉพาะโหมดแข่งขัน' });
+      if (!c) return ack?.({ ok: false, error: 'ใช้ได้เฉพาะโหมดแข่งขันหรือฝึกเล่นคนเดียว' });
       return comp.role(socket, payload, ack, c);
     });
 
@@ -298,6 +472,8 @@ export function attachRooms(io) {
     socket.on('stage:start', (payload, ack) => {
       const c = competitive(socket);
       if (c) return comp.stageStart(socket, payload, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.stageStart(socket, payload, ack, so);
       const room = findRoom(socket);
       if (!room || !roleOf(room, socket.data.playerId)) return ack?.({ ok: false });
       const id = Number(payload?.stageId);
@@ -305,35 +481,48 @@ export function attachRooms(io) {
       if (!canPick) return ack?.({ ok: false, error: 'กำลังเล่นด่านอยู่' });
       if (!ROLES.every((r) => room.slots[r])) return ack?.({ ok: false, error: 'ต้องมีผู้เล่นครบ 2 คน' });
       if (!Number.isInteger(id) || id < 1 || id > unlockedUpTo(room)) return ack?.({ ok: false, error: 'ด่านนี้ยังล็อกอยู่' });
-      room.run = startRun(id, { sample: room.options.sample, seed: randomInt(1, 2 ** 31) });
-      for (const role of ROLES) {
-        if (room.slots[role]) Object.assign(room.slots[role], spawnPlayer(id, role));
-      }
-      room.phase = 'play';
-      system(room, `เริ่มด่าน ${id}: ${room.run.stage.title} — System Link A ↔ B: OFFLINE`);
-      emitState(room);
-      emitViews(room);
+      startCoopStage(room, id);
       return ack?.({ ok: true });
     });
 
-    socket.on('stage:quit', () => {
+    // Clients send (payload, ack) like every other event; the bare (ack) form is still accepted.
+    socket.on('stage:retry', (payload, maybeAck) => {
+      const ack = typeof maybeAck === 'function' ? maybeAck : typeof payload === 'function' ? payload : null;
       const c = competitive(socket);
-      if (c) return comp.stageQuit(socket, c);
+      if (c) return comp.stageRetry(socket, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.stageRetry(socket, ack, so);
       const room = findRoom(socket);
-      if (!room || !roleOf(room, socket.data.playerId) || room.phase !== 'play') return;
+      const role = room && roleOf(room, socket.data.playerId);
+      if (!room || !role || room.slots[role].socketId !== socket.id || room.phase !== 'ended' || !room.run?.result?.gameOver) return ack?.({ ok: false, error: 'ไม่มีด่าน Game Over ที่รอเริ่มใหม่' });
+      (room.retryVotes ||= new Set()).add(role);
+      return ack?.(settleCoopRetry(room) || coopRetryStatus(room));
+    });
+
+    socket.on('stage:quit', (payload, ack) => {
+      const c = competitive(socket);
+      if (c) return comp.stageQuit(socket, c, ack);
+      const so = soloRoom(socket);
+      if (so) return solo.stageQuit(socket, so, ack);
+      const room = findRoom(socket);
+      if (!room || !roleOf(room, socket.data.playerId) || !['play', 'ended'].includes(room.phase)) return ack?.({ ok: false, error: 'ยังไม่ได้อยู่ในด่าน' });
+      clearTimeout(room.stageTimer);
       const unfinished = room.run && !room.run.result;
       room.phase = 'select';
       room.run = null;
       if (unfinished) system(room, 'ออกจากด่านกลับไปหน้าเลือกด่าน');
       emitState(room);
+      ack?.({ ok: true });
     });
 
     socket.on('player:move', (payload) => {
       const c = competitive(socket);
       if (c) return comp.move(socket, payload, c);
+      const so = soloRoom(socket);
+      if (so) return solo.move(socket, payload, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
-      if (!role || room.phase !== 'play' || !room.run || !room.slots[role]) return;
+      if (!role || room.phase !== 'play' || !room.run || !room.slots[role] || room.slots[role].socketId !== socket.id) return;
       const player = room.slots[role];
       const now = Date.now();
       const dt = Math.min(0.1, Math.max(0, (now - (player.lastMoveAt || now)) / 1000));
@@ -351,6 +540,8 @@ export function attachRooms(io) {
     socket.on('player:interact', (payload, ack) => {
       const c = competitive(socket);
       if (c) return comp.interact(socket, payload, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.interact(socket, payload, ack, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run || !room.slots[role]) return ack?.({ ok: false, error: 'ยังไม่ได้เริ่มด่าน' });
@@ -366,6 +557,8 @@ export function attachRooms(io) {
     socket.on('term:exec', (payload, ack) => {
       const c = competitive(socket);
       if (c) return comp.exec(socket, payload, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.exec(socket, payload, ack, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run) return ack?.({ lines: [] });
@@ -389,6 +582,8 @@ export function attachRooms(io) {
     socket.on('form:submit', (payload, ack) => {
       const c = competitive(socket);
       if (c) return comp.form(socket, payload, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.form(socket, payload, ack, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.phase !== 'play' || !room.run) return ack?.({ ok: false, message: 'ไม่ได้อยู่ในด่าน' });
@@ -404,6 +599,8 @@ export function attachRooms(io) {
     socket.on('hint:reveal', (payload, ack) => {
       const c = competitive(socket);
       if (c) return comp.hint(socket, payload, ack, c);
+      const so = soloRoom(socket);
+      if (so) return solo.hint(socket, payload, ack, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || !room.run) return ack?.({ ok: false });
@@ -417,6 +614,8 @@ export function attachRooms(io) {
     socket.on('chat:send', (payload) => {
       const c = competitive(socket);
       if (c) return comp.chat(socket, payload, c);
+      const so = soloRoom(socket);
+      if (so) return undefined;
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       const text = clean(payload?.text, 240);
@@ -430,6 +629,8 @@ export function attachRooms(io) {
     socket.on('activity', (payload) => {
       const c = competitive(socket);
       if (c) return undefined;
+      const so = soloRoom(socket);
+      if (so) return undefined;
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || !['typing', 'docs'].includes(payload?.kind)) return;
@@ -438,16 +639,26 @@ export function attachRooms(io) {
 
     socket.on('disconnect', () => {
       const c = competitive(socket);
-      if (c) return comp.disconnect(socket, c);
+      if (c) {
+        const p = voicePlayer(c, voiceSeatOf(c, socket));
+        comp.disconnect(socket, c);
+        resetVoice(p);
+        emitVoiceRoster(c);
+        return;
+      }
+      const so = soloRoom(socket);
+      if (so) return solo.disconnect(socket, so);
       const room = findRoom(socket);
       const role = room && roleOf(room, socket.data.playerId);
       if (!role || room.slots[role].socketId !== socket.id) return;
       room.slots[role].connected = false;
+      resetVoice(room.slots[role]);
       room.slots[role].input = null;
       room.slots[role].moving = false;
       room.slots[role].ready = room.phase === 'lobby' ? false : room.slots[role].ready;
       system(room, `${room.slots[role].name} หลุดการเชื่อมต่อ — เข้าห้อง ${room.code} อีกครั้งเพื่อเล่นต่อ`);
-      emitState(room);
+      if (!settleCoopRetry(room)) emitState(room);
+      emitVoiceRoster(room);
       if (!ROLES.some((r) => room.slots[r]?.connected)) cleanupLater(room);
     });
   });

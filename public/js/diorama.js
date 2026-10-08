@@ -1,7 +1,8 @@
 import { drawChar, frameSize, frameCount } from './sprites.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer } from './world.js';
 
-const isComp = (mode) => mode === 'ffa' || mode === 'team';
+// Modes where one player may walk to and use either room's computer (FFA, 2v2, solo practice).
+const isComp = (mode) => mode === 'ffa' || mode === 'team' || mode === 'solo';
 const DROP_ICON = { configErase: '🧽', configGlitch: '⚡', shield: '🛡️', reflect: '🪞' };
 
 const COLORS = { A: '#3fd6a8', B: '#f27fc4' };
@@ -69,7 +70,14 @@ export class Diorama {
   setActive(active) { this.active = active; if (!active) this.stop(); else this.resize(); }
   setPlayers(players) { this.players = players; }
   setRole(role) { this.role = role || 'A'; }
-  setMode(mode, playerId, side) { this.mode = mode || 'coop'; this.playerId = isComp(this.mode) ? playerId : null; this.side = side || 'A'; this.role = this.playerId || this.side; }
+  setMode(mode, playerId, side) {
+    this.mode = mode || 'coop';
+    this.playerId = isComp(this.mode) ? playerId : null;
+    this.side = side || 'A';
+    // In co-op the controlled sprite is the player's room (A/B), not the
+    // room-side used to select a station. Keep the role chosen by setRole().
+    if (this.playerId) this.role = this.playerId;
+  }
   setOnline(online) { this.online = online; }
   setDrops(drops) { this.drops = drops || []; }
   setConnected(connected) { this.connected = connected; if (!connected) this.stop(); }
@@ -212,10 +220,12 @@ export class Diorama {
       if (!this.players[role] || role !== this.role && !this.targets?.[role]) continue;
       const c = this.chars[role], p = this.players[role], { w, h } = frameSize(p.charId); ctx.save(); ctx.globalAlpha = p.connected === false ? .45 : 1;
       ctx.fillStyle = 'rgba(60, 40, 110, .22)'; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 22, 8, 0, 0, Math.PI * 2); ctx.fill();
-      if (role === this.role) { ctx.strokeStyle = COLORS[p.roomSide || this.side || role] || '#8a70dd'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 26, 10, 0, 0, Math.PI * 2); ctx.stroke(); }
+      if (p.colorHex) { ctx.strokeStyle = p.colorHex; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 27, 11, 0, 0, Math.PI * 2); ctx.stroke(); }
+      if (!p.colorHex && role === this.role) { ctx.strokeStyle = COLORS[p.roomSide || this.side || role] || '#8a70dd'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(c.x, c.y + 1, 26, 10, 0, 0, Math.PI * 2); ctx.stroke(); }
       // Sprites follow the mockup scale (about 1/6 of the room height); collision stays at the feet.
       const size = 2; ctx.translate(Math.round(c.x - w * size / 2), Math.round(c.y - h * size + 4)); ctx.scale(size, size); drawChar(ctx, p.charId, c.moving ? Math.floor(now * 7) % frameCount(p.charId) : 0, 0, 0, c.facing < 0, c.direction); ctx.restore();
-      this.text(role === this.role ? `คุณ · ${p.name}` : `${role} · ${p.name}`, c.x, c.y + 26, (COLORS[p.roomSide || role] ? (p.roomSide || role) === 'A' ? '#16806a' : '#b0367d' : '#634ea0'), 12, true);
+      const label = p.colorName ? (role === this.role ? `คุณ · ${p.colorName}` : `${role} · ${p.colorName}`) : (role === this.role ? `คุณ · ${p.name}` : `${role} · ${p.name}`);
+      this.text(label, c.x, c.y + 26, p.colorHex || (COLORS[p.roomSide || role] ? (p.roomSide || role) === 'A' ? '#16806a' : '#b0367d' : '#634ea0'), 12, true, p.colorHex);
       if (c.terminal || this.bubbles[role]?.until > performance.now()) this.text(c.terminal ? '>_' : '···', c.x, c.y - h * size - 4, '#4b3f78', 15, true);
     }
   }
@@ -256,9 +266,9 @@ export class Diorama {
     ctx.fillStyle = '#ff6f8e'; ctx.fillRect(x - 2, y - 2, 4, 8);
   }
 
-  text(text, x, y, color, size, background = false) {
+  text(text, x, y, color, size, background = false, borderColor = null) {
     const ctx = this.ctx; ctx.font = `600 ${size}px Prompt, "Chakra Petch", Tahoma, sans-serif`; ctx.textAlign = 'center';
-    if (background) { const w = ctx.measureText(text).width + 12; ctx.fillStyle = 'rgba(255, 253, 247, .92)'; ctx.strokeStyle = 'rgba(120, 100, 190, .45)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(x - w / 2, y - size - 1, w, size + 7, 5); ctx.fill(); ctx.stroke(); }
+    if (background) { const w = ctx.measureText(text).width + 12; ctx.fillStyle = 'rgba(255, 253, 247, .92)'; ctx.strokeStyle = borderColor || 'rgba(120, 100, 190, .45)'; ctx.lineWidth = borderColor ? 2 : 1; ctx.beginPath(); ctx.roundRect(x - w / 2, y - size - 1, w, size + 7, 5); ctx.fill(); ctx.stroke(); }
     ctx.fillStyle = color; ctx.fillText(text, x, y);
   }
 }

@@ -2,6 +2,7 @@
 import { getStage } from './stages/index.js';
 import { makeRng } from './netutil.js';
 import { COMMANDS, parse, helpLines, err, dim } from './terminal.js';
+import { randomInt } from 'node:crypto';
 
 export const HINT_PENALTY = { 1: 5, 2: 10, 3: 15 };
 
@@ -11,6 +12,7 @@ export function startRun(stageId, { sample = false, seed = Date.now() } = {}) {
   const s = stage.generate(makeRng(seed), sample);
   return {
     stage,
+    seed,
     s,
     startedAt: Date.now(),
     completedAt: null,
@@ -26,6 +28,20 @@ export function startRun(stageId, { sample = false, seed = Date.now() } = {}) {
     passed: false,
     result: null,
   };
+}
+
+/** Stable signature of the generated prompt, excluding mutable player progress. */
+export function scenarioFingerprint(run) {
+  return JSON.stringify({ truth: run.s.truth, state: run.s.state, meta: run.s.meta, flags: run.s.flags });
+}
+
+/** Generate a new random-mode scenario distinct from this room's last visit to the stage. */
+export function startFreshRun(stageId, { sample = false, previousFingerprint = null } = {}) {
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const run = startRun(stageId, { sample, seed: randomInt(1, 2 ** 31) });
+    if (sample || !previousFingerprint || scenarioFingerprint(run) !== previousFingerprint) return run;
+  }
+  throw new Error(`Could not generate a different scenario for stage ${stageId}`);
 }
 
 function context(run, role, parsed) {

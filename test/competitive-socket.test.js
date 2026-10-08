@@ -41,6 +41,23 @@ async function begin(ps, stageId) {
   assert.equal(res.ok, true, res.error);
 }
 
+async function stateWhen(client, predicate, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.socket.off('room:state', onState);
+      reject(new Error('timeout waiting for matching room:state'));
+    }, timeout);
+    const onState = (state) => {
+      if (!predicate(state)) return;
+      clearTimeout(timer);
+      client.socket.off('room:state', onState);
+      resolve(state);
+    };
+    client.socket.on('room:state', onState);
+    onState(client.last['room:state']);
+  });
+}
+
 /** Teleport a seat in front of a station (movement itself is covered by world tests). */
 function standAt(code, seat, side) {
   const room = inspectRoom(code);
@@ -258,7 +275,9 @@ test('FFA: players gone past the grace period forfeit; the last one standing win
     const end = ps[0].next('match:end', () => true, 3000);
     ps[1].disconnect();
     ps[2].disconnect();
-    ps[3].fire('stage:quit');
+    // stage:quit is a unanimous vote to return to stage select; leaving the
+    // match is an explicit room:leave and counts as a forfeit immediately.
+    ps[3].fire('room:leave');
     const res = await end;
     assert.equal(res.reason, 'forfeit');
     assert.equal(res.results[0].scopeId, 'P1');
@@ -271,7 +290,7 @@ test('2v2: team choice, full-team rejection and start validation', async () => {
   const srv = await startServer();
   try {
     const { ps } = await competitiveRoom(srv, 'team');
-    const state = ps[0].last['room:state'];
+    const state = await stateWhen(ps[0], (snapshot) => Object.values(snapshot?.teams || {}).flat().length === 4);
     assert.deepEqual(state.teams, { T1: ['P1', 'P3'], T2: ['P2', 'P4'] }, 'joiners are auto-balanced');
     assert.equal((await ps[1].send('lobby:team', { teamId: 'T3' })).ok, false);
     assert.equal((await ps[1].send('lobby:team', { teamId: 'T1' })).ok, true, 'one extra member is allowed while reshuffling');
@@ -343,17 +362,49 @@ test('2v2: team chat and hints stay inside the team', async () => {
   } finally { await srv.close(); }
 });
 
+test('voice signaling follows the selected 2v2 channel and never crosses incompatible teams', async () => {
+  const srv = await startServer();
+  try {
+    const { ps } = await competitiveRoom(srv, 'team', { teams: ['T1', 'T1', 'T2', 'T2'] });
+    for (const p of ps) {
+      const res = await p.send('voice:settings', { active: true, micEnabled: true, channel: 'team' });
+      assert.equal(res.ok, true);
+    }
+
+    const teammateSignal = ps[1].next('voice:signal');
+    const allowed = await ps[0].send('voice:signal', {
+      to: 'P2', signal: { description: { type: 'offer', sdp: 'v=0' } },
+    });
+    assert.equal(allowed.ok, true);
+    assert.equal((await teammateSignal).from, 'P1');
+
+    const blocked = await ps[0].send('voice:signal', {
+      to: 'P3', signal: { description: { type: 'offer', sdp: 'v=0' } },
+    });
+    assert.equal(blocked.ok, false, 'team-only signal cannot reach an opponent');
+
+    await ps[0].send('voice:settings', { active: true, micEnabled: true, channel: 'room' });
+    await ps[2].send('voice:settings', { active: true, micEnabled: true, channel: 'room' });
+    const roomSignal = ps[2].next('voice:signal');
+    const roomAllowed = await ps[0].send('voice:signal', {
+      to: 'P3', signal: { description: { type: 'offer', sdp: 'v=0' } },
+    });
+    assert.equal(roomAllowed.ok, true);
+    assert.equal((await roomSignal).from, 'P1');
+  } finally { await srv.close(); }
+});
+
 test('2v2: one teammate quitting does not forfeit the team; both quitting does', async () => {
   const srv = await startServer();
   try {
     const { ps, code } = await competitiveRoom(srv, 'team', { teams: ['T1', 'T1', 'T2', 'T2'] });
     await begin(ps, 1);
-    ps[2].fire('stage:quit');
+    ps[2].fire('room:leave');
     await tick(60);
     assert.equal(inspectRoom(code).phase, 'play');
     assert.equal(inspectRoom(code).match.scopes.T2.forfeited, false);
     const end = ps[0].next('match:end');
-    ps[3].fire('stage:quit');
+    ps[3].fire('room:leave');
     const res = await end;
     assert.equal(res.reason, 'forfeit');
     assert.deepEqual(res.results.map((r) => [r.scopeId, r.rank, r.forfeited]), [['T1', 1, false], ['T2', 2, true]]);

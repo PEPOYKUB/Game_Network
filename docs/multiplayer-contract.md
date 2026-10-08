@@ -86,3 +86,18 @@ ResultRow = { scopeId, teamId, members: [seat], rank, completed, forfeited, obje
 
 - **งาน 2**: คำนวณ progress ต่อ scope จาก `match.scopes[*].run` → แทน `objectivesOf` + `compatProgress`; ส่งพร้อม `version`; ใช้ `teamId`/`members` จาก `publicMatch`
 - **งาน 3**: เป้าหมายไอเทม = `scopeId` (FFA คู่แข่ง 1 คน, 2v2 ทีมตรงข้าม 1 ทีม); ผู้ที่ใช้ได้ต้องผ่าน `inPlay()` (สมาชิก + `phase === 'play'` + ไม่ถอนตัว/ไม่จบ); scope ที่ `finishedAt` หรือ `forfeited` ไม่เป็นเป้าหมาย; ตำแหน่งผู้เล่นอยู่ที่ `room.seats[seat].x/y`
+
+## โหมด `solo` (ฝึกเล่นคนเดียว)
+
+ห้อง `mode: 'solo'` จัดการโดย `server/game/solo.js` — ใช้ event ชุดเดียวกับโหมดแข่งขันโดยมีที่นั่งเดียว `P1`
+(`room:state` มี `mode: 'solo'`, `you: 'P1'`, `me.station`, `match: null`; ไม่มี `match:*`, `item:*`, `voice:*`, `chat:msg`)
+
+| Event | พฤติกรรมใน solo |
+|---|---|
+| `room:create { mode: 'solo' }` | สร้างห้องที่มีผู้เล่นคนเดียว |
+| `room:join` | เฉพาะ `playerId` เดิม (รีโหลด) — คนอื่นถูกปฏิเสธ |
+| `lobby:start` | ไปหน้าเลือกด่านทันที ไม่ต้อง ready |
+| `player:interact` / `stage:role` / `term:exec` / `form:submit` | เหมือน FFA: role = คอมที่เปิดอยู่ |
+| `stage:retry` | เริ่มด่านปัจจุบันใหม่ได้ทุกเมื่อ |
+| `stage:quit` | กลับหน้าเลือกด่านทันที (ไม่มีโหวต) |
+| `stage:complete` | `result.practice = true`; ไม่บันทึก leaderboard |

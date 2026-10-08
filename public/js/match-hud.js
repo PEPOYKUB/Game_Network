@@ -2,6 +2,7 @@
 // item feedback and the final standings. Everything here only *asks* the server; results
 // come back through item:state / item:notice / match:end.
 import { socket, send } from './net.js';
+import { sfx } from './audio.js';
 
 export const isComp = (mode) => mode === 'ffa' || mode === 'team';
 export const PICKUP_RANGE = 40;
@@ -29,7 +30,9 @@ export function initMatchHud({ getRoom, getDio, toast, onBackToSelect }) {
   const wrap = document.getElementById('diorama-wrap');
   const hud = h('div', { class: 'match-hud hidden', id: 'match-hud', 'aria-live': 'polite' });
   const result = h('div', { class: 'match-result hidden', id: 'match-result', role: 'dialog', 'aria-label': 'ผลการแข่งขัน' });
-  wrap.append(hud);
+  // Server-driven start countdown (match.startsAt). Input is refused server-side until then.
+  const countdown = h('div', { class: 'match-countdown hidden', id: 'match-countdown', role: 'status', 'aria-live': 'assertive' });
+  wrap.append(hud, countdown);
   document.body.append(result);
 
   const st = { items: { drops: [], inventory: [], defense: null, status: { disrupted: false } }, log: [], offset: 0, resultKey: null, target: null };
@@ -78,6 +81,7 @@ export function initMatchHud({ getRoom, getDio, toast, onBackToSelect }) {
     }
     const res = await send('item:use', payload);
     if (!res.ok) toast(res.error || 'ใช้ไอเทมไม่ได้', true);
+    else if (!res.duplicate) sfx.itemUse(item, res.outcome);
   };
 
   const addLog = (text, kind = '') => {
@@ -90,7 +94,20 @@ export function initMatchHud({ getRoom, getDio, toast, onBackToSelect }) {
     hud.classList.toggle('hidden', !active());
     if (!active()) { result.classList.add('hidden'); return; }
     const m = r.match;
-    const left = m.endsAt - (Date.now() + st.offset);
+    const serverNow = Date.now() + st.offset;
+    const toStart = (m.startsAt || 0) - serverNow;
+    // During the shared briefing the clock has not started yet: show the full duration.
+    const left = toStart > 0 ? m.endsAt - m.startsAt : m.endsAt - serverNow;
+    countdown.classList.toggle('hidden', !(toStart > 0 && r.phase === 'play'));
+    if (toStart > 0) countdown.textContent = `เริ่มพร้อมกันใน ${Math.ceil(toStart / 1000)}`;
+    // The HUD refreshes four times a second. Do not replace the focused native
+    // select: doing so closes its option list before another player can be chosen.
+    if (document.activeElement?.id === 'mh-target') {
+      const time = hud.querySelector('#mh-time');
+      if (time) time.textContent = r.phase === 'ended' ? 'จบ' : fmt(left);
+      renderResult(r);
+      return;
+    }
     const me = r.players[r.you];
     const list = targets();
     if (!list.some((t) => t.id === st.target)) st.target = list[0]?.id || null;
@@ -99,7 +116,8 @@ export function initMatchHud({ getRoom, getDio, toast, onBackToSelect }) {
     hud.replaceChildren(
       h('div', { class: 'mh-row' },
         h('span', { class: `mh-timer${left < 60_000 ? ' urgent' : ''}` }, '⏱ ', h('b', { id: 'mh-time' }, r.phase === 'ended' ? 'จบ' : fmt(left))),
-        h('span', { class: 'mh-me' }, r.mode === 'team' ? `ทีม ${me?.teamId} · ${r.you}` : `FFA · ${r.you}`),
+        h('span', { class: 'mh-me', style: me?.colorHex ? `--player-color:${me.colorHex}` : '' },
+          me?.colorName ? `${r.mode === 'team' ? `ทีม ${me.teamId}` : r.you} · ${me.colorName}` : r.mode === 'team' ? `ทีม ${me?.teamId} · ${r.you}` : `FFA · ${r.you}`),
         st.items.defense ? h('span', { class: 'mh-chip defense' }, `${ITEM_ICON[st.items.defense.item]} ${st.items.defense.item === 'shield' ? 'Shield' : 'Reflect'} ทำงาน`) : null,
         disrupted ? h('span', { class: 'mh-chip hit' }, '⚠ ถูกรบกวน') : null),
       h('div', { class: 'mh-row mh-inv', id: 'mh-inventory' },
@@ -135,29 +153,48 @@ export function initMatchHud({ getRoom, getDio, toast, onBackToSelect }) {
     result.replaceChildren(h('div', { class: 'match-result-card' },
       h('h2', {}, mine?.rank === 1 ? '🏆 ชนะ!' : `อันดับ ${mine?.rank ?? '-'}`),
       h('p', { class: 'mh-muted' }, `การแข่งขันจบ · ${why}`),
-      h('ol', { class: 'mh-standings', id: 'mh-standings' }, ...m.results.map((row) => h('li', { class: row.scopeId === r.me.scopeId ? 'mine' : '' },
-        h('b', {}, `#${row.rank}`),
-        h('span', {}, r.mode === 'team' ? `ทีม ${row.teamId} (${row.members.map((s) => r.players[s]?.name || s).join(', ')})` : r.players[row.members[0]]?.name || row.scopeId),
-        h('span', {}, row.forfeited ? 'ถอนตัว' : row.completed ? 'ผ่านด่าน' : 'ยังไม่ผ่าน'),
-        h('span', {}, `${row.score} คะแนน · ${fmt(row.elapsedMs)}`)))),
+      h('ol', { class: 'mh-standings', id: 'mh-standings' }, ...m.results.map((row) => {
+        const first = r.players[row.members[0]];
+        const members = row.members.map((seat) => r.players[seat]?.name || seat).join(', ');
+        const label = r.mode === 'team'
+          ? `ทีม ${row.teamId}${first?.colorName ? ` · ${first.colorName}` : ''} (${members})`
+          : `${first?.colorName ? `${first.colorName} · ` : ''}${first?.name || row.scopeId}`;
+        return h('li', { class: row.scopeId === r.me.scopeId ? 'mine' : '', style: first?.colorHex ? `border-left:5px solid ${first.colorHex}` : '' },
+          h('b', {}, `#${row.rank}`),
+          h('span', { style: first?.colorHex ? `color:${first.colorHex};font-weight:700` : '' }, label),
+          h('span', {}, row.forfeited ? 'ถอนตัว' : row.completed ? 'ผ่านด่าน' : 'ยังไม่ผ่าน'),
+          h('span', {}, `${row.score} คะแนน · ${fmt(row.elapsedMs)}`));
+      })),
       h('div', { class: 'mh-actions' },
         h('button', { class: 'btn ghost', onclick: () => result.classList.add('hidden') }, 'ดูแผนที่'),
-        h('button', { class: 'btn green', onclick: () => onBackToSelect() }, 'เลือกด่านถัดไป'))));
+        m.endedReason === 'timeout'
+          ? h('button', { class: 'btn green', onclick: async () => {
+            const res = await send('stage:retry');
+            if (!res.ok) toast(res.error || 'ยืนยันเริ่มด่านใหม่ไม่ได้', true);
+            else if (res.waiting) toast(`ยืนยันแล้ว รอผู้เล่นอื่นเริ่มใหม่ (${res.count}/${res.total})`);
+          } }, 'ยืนยันเล่นด่านนี้ใหม่')
+          : h('button', { class: 'btn green', onclick: () => onBackToSelect() }, 'เลือกด่านถัดไป'))));
     result.classList.remove('hidden');
   }
 
   socket.on('item:state', (items) => {
+    // Each snapshot is explicitly scoped. Ignore any misrouted or stale state
+    // from another FFA player / 2v2 team so it cannot replace this inventory.
+    const scopeId = room()?.me?.scopeId;
+    if (items?.scopeId && scopeId && items.scopeId !== scopeId) return;
     st.items = items;
     getDio()?.setDrops?.(items.drops);
     render();
   });
   socket.on('item:notice', (n) => {
     addLog(n.text, n.kind);
+    if (n.kind === 'hit') sfx.itemHit(n.item);
     if (['hit', 'blocked', 'reflected', 'shielded'].includes(n.kind)) toast(n.text, n.kind === 'hit');
     render();
   });
   socket.on('item:event', (e) => { if (e.type === 'spawn') addLog(`มี ${e.name} เกิดบนแผนที่`, 'spawn'); render(); });
-  socket.on('match:start', () => { st.log = []; st.resultKey = null; render(); });
+  socket.on('match:start', (m) => { st.log = []; st.resultKey = null; if (m?.now) st.offset = m.now - Date.now(); render(); });
+  socket.on('match:go', (m) => { if (m?.now) st.offset = m.now - Date.now(); toast('เริ่ม! ทุกคนออกตัวพร้อมกัน'); render(); });
   socket.on('session:replaced', () => toast('ห้องนี้ถูกเปิดจากแท็บ/อุปกรณ์อื่นแล้ว — แท็บนี้หยุดควบคุมเกม', true));
 
   document.addEventListener('keydown', (e) => {

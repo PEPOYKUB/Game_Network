@@ -13,6 +13,16 @@ let bgmBus = null;
 let bgmTimer = null;
 let nextNoteTime = 0;
 let step = 0;
+const itemSoundUrls = Object.freeze({
+  configErase: '/assets/audio/config-erase.mp3',
+  configGlitch: '/assets/audio/config-glitch.mp3',
+  shield: '/assets/audio/shield.mp3',
+  reflect: '/assets/audio/reflect.mp3',
+  gameOver: '/assets/audio/game-over.mp3',
+  story: '/assets/audio/text.mp3',
+});
+const itemSoundBuffers = new Map();
+const itemSoundLoads = new Set();
 
 function save() {
   store.set('kuhu.settings', settings);
@@ -23,6 +33,31 @@ function applyVolume() {
   master.gain.value = settings.master ? (settings.volume / 100) * 0.5 : 0;
   sfxBus.gain.value = settings.sfx ? settings.sfxVolume / 100 : 0;
   bgmBus.gain.value = settings.bgm ? 0.35 * (settings.bgmVolume / 100) : 0;
+}
+
+function loadItemSounds() {
+  if (!ctx) return;
+  for (const [item, url] of Object.entries(itemSoundUrls)) {
+    if (itemSoundBuffers.has(item) || itemSoundLoads.has(item)) continue;
+    itemSoundLoads.add(item);
+    const audioContext = ctx;
+    fetch(url)
+      .then((response) => { if (!response.ok) throw new Error(`Unable to load ${url}`); return response.arrayBuffer(); })
+      .then((bytes) => audioContext.decodeAudioData(bytes))
+      .then((buffer) => { if (ctx === audioContext) itemSoundBuffers.set(item, buffer); })
+      .catch(() => {})
+      .finally(() => itemSoundLoads.delete(item));
+  }
+}
+
+function playItemSound(item) {
+  const buffer = itemSoundBuffers.get(item);
+  if (!ctx || !buffer) return false;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(sfxBus);
+  source.start();
+  return true;
 }
 
 /** Must be called from a user gesture (browsers block audio before that). */
@@ -39,6 +74,7 @@ export function unlockAudio() {
       applyVolume();
     }
     if (ctx.state === 'suspended') ctx.resume();
+    loadItemSounds();
     if (settings.bgm) startBgm();
   } catch {
     ctx = null;
@@ -72,6 +108,26 @@ export const sfx = {
   hint: () => [880, 660, 440].forEach((f, i) => tone(f, 0.09, { when: i * 0.07, vol: 0.1 })),
   start: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.1, { when: i * 0.07, vol: 0.12 })),
   clear: () => [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => tone(f, i === 6 ? 0.35 : 0.12, { when: i * 0.1, vol: 0.13 })),
+  itemUse: (item) => {
+    if (playItemSound(item)) return;
+    if (item === 'shield') return [587, 880, 1175].forEach((f, i) => tone(f, 0.14, { when: i * 0.07, type: 'sine', vol: 0.1 }));
+    if (item === 'reflect') return [784, 1047, 784, 1319].forEach((f, i) => tone(f, 0.1, { when: i * 0.065, type: 'triangle', vol: 0.09 }));
+    if (item === 'configGlitch') return [1800, 620, 1450, 430].forEach((f, i) => tone(f, 0.07, { when: i * 0.045, type: 'sawtooth', vol: 0.055 }));
+    if (item === 'configErase') return [900, 680, 420].forEach((f, i) => tone(f, 0.11, { when: i * 0.06, type: 'square', vol: 0.08 }));
+    [660, 990].forEach((f, i) => tone(f, 0.08, { when: i * 0.07, vol: 0.1 }));
+  },
+  itemHit: (item = 'configGlitch') => {
+    if (playItemSound(item)) return;
+    [440, 330, 220].forEach((f, i) => tone(f, 0.13, { when: i * 0.07, type: 'triangle', vol: 0.09 }));
+  },
+  gameOver: () => {
+    if (playItemSound('gameOver')) return;
+    [440, 370, 311, 220].forEach((f, i) => tone(f, 0.28, { when: i * 0.2, type: 'triangle', vol: 0.12, slide: -55 }));
+  },
+  story: () => {
+    if (playItemSound('story')) return;
+    [660, 880, 1047].forEach((f, i) => tone(f, 0.1, { when: i * 0.08, type: 'triangle', vol: 0.08 }));
+  },
 };
 
 // C – Am – F – G, one bar each, eighth notes.

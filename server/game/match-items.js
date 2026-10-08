@@ -49,15 +49,21 @@ function pickConfigKey(run) {
 
 export function createMatchItems({ room, sendTo, broadcast, onScopeChanged }) {
   const match = room.match;
-  const state = createItemState();
+  // The spawn clock starts when the match does (after the shared briefing), not at creation.
+  const state = createItemState(Math.max(Date.now(), match.startsAt || 0));
   const glitches = new Map(); // effectId → { scopeId, key, glitched, saved }
   const spots = itemSpots(match.level);
 
   const playersOf = () => Object.values(room.seats).filter(Boolean);
   const scopeOfSeat = (seat) => match.scopes[room.seats[seat]?.teamId];
+  const scopeIdOfSeat = (seat) => scopeOfSeat(seat)?.id;
+  const scopedItems = (seat) => {
+    const scopeId = scopeIdOfSeat(seat);
+    return { ...publicItems(state, scopeId), scopeId };
+  };
 
   const pushState = () => {
-    for (const p of playersOf()) if (p.connected) sendTo([p.seat], 'item:state', publicItems(state, p.teamId));
+    for (const p of playersOf()) if (p.connected) sendTo([p.seat], 'item:state', scopedItems(p.seat));
   };
 
   /** Apply an effect that items.js resolved; returns nothing — state lives on the scope run. */
@@ -91,7 +97,7 @@ export function createMatchItems({ room, sendTo, broadcast, onScopeChanged }) {
   };
 
   const tick = () => {
-    if (room.phase !== 'play') return;
+    if (room.phase !== 'play' || Date.now() < (match.startsAt || 0)) return;
     const events = tickItems(state, { spawnPoints: spots });
     if (!events.length) return;
     for (const e of events) {
@@ -109,13 +115,13 @@ export function createMatchItems({ room, sendTo, broadcast, onScopeChanged }) {
     state,
     stop() { clearInterval(timer); },
     pushState,
-    sendStateTo(seat) { const p = room.seats[seat]; if (p) sendTo([seat], 'item:state', publicItems(state, p.teamId)); },
+    sendStateTo(seat) { const p = room.seats[seat]; if (p) sendTo([seat], 'item:state', scopedItems(seat)); },
 
     pickup(player, payload) {
       const drop = state.drops.get(payload?.dropId);
       const distance = drop ? Math.hypot(drop.x - player.x, drop.y - player.y) : Infinity;
       const res = pickUpItem(state, {
-        playerId: player.teamId,
+        playerId: scopeIdOfSeat(player.seat),
         dropId: payload?.dropId,
         requestId: typeof payload?.requestId === 'string' ? `${player.seat}:${payload.requestId}` : undefined,
         isMember: true,
@@ -131,10 +137,10 @@ export function createMatchItems({ room, sendTo, broadcast, onScopeChanged }) {
     },
 
     use(player, payload) {
-      const inventory = state.inventories.get(player.teamId) || [];
+      const own = scopeOfSeat(player.seat);
+      const inventory = state.inventories.get(own?.id) || [];
       const slot = Number(payload?.slot);
       const item = inventory[slot - 1];
-      const own = scopeOfSeat(player.seat);
       let target = null;
       let configKey = null;
       if (item === 'configErase' || item === 'configGlitch') {
@@ -147,7 +153,7 @@ export function createMatchItems({ room, sendTo, broadcast, onScopeChanged }) {
         target = { id: scope.id, eligible: true, finished: false, sameTeam: false, configKeys: keys };
       }
       const res = useItem(state, {
-        playerId: player.teamId,
+        playerId: own?.id,
         itemSlot: slot,
         targetId: target?.id,
         requestId: typeof payload?.requestId === 'string' ? `${player.seat}:${payload.requestId}` : undefined,

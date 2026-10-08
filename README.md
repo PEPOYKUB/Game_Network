@@ -86,6 +86,8 @@ npm run assets    # สร้างสไปรต์ใหม่หลังท
 
 ## Documents
 
+- [สถานะ MVP 4 คน + ไอเทม และข้อจำกัด](docs/mvp-status.md)
+
 - [Network architecture](docs/network-architecture.md)
 - [Sequence diagram](docs/sequence-diagram.md)
 - [WebSocket vs HTTP](docs/websocket-vs-http.md)

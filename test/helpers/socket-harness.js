@@ -6,8 +6,11 @@ import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
 import { attachRooms } from '../../server/game/rooms.js';
 import { initLeaderboard } from '../../server/game/leaderboard.js';
+import { configureModes } from '../../server/game/competitive.js';
 
-export async function startServer() {
+export async function startServer({ briefingMs = 0 } = {}) {
+  // Most socket tests drive play immediately; briefing tests opt in with a real delay.
+  configureModes({ briefingMs });
   initLeaderboard(path.join(os.tmpdir(), `kuhu-test-leaderboard-${process.pid}.json`));
   const http = createServer();
   const io = new Server(http);

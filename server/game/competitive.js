@@ -8,11 +8,11 @@
 //                       scopeId === teamId, so a player's scope is always `player.teamId`.
 //   room.phase          'lobby' → 'select' → 'play' → 'ended' → (stage:start | stage:quit → 'select')
 //   room.match          { stageId, seed, startedAt, endsAt, endedAt, endedReason, scopes, results }
-import { randomInt } from 'node:crypto';
-import { startRun, execute, submitForm, revealHint, roleView, publicRun } from './engine.js';
+import { startRun, startFreshRun, scenarioFingerprint, execute, submitForm, revealHint, roleView, publicRun } from './engine.js';
 import { scoreRun } from './scoring.js';
 import { levelForStage, spawnPlayer, movePlayer, nearbyComputer, canStand } from '../../public/js/world.js';
 import { createMatchItems, rememberInitialConfig, SABOTAGE_KEYS } from './match-items.js';
+import { PLAYER_COLORS, playerColor } from '../../public/js/player-colors.js';
 
 export const SEATS = ['P1', 'P2', 'P3', 'P4'];
 export const TEAMS = ['T1', 'T2'];
@@ -20,10 +20,12 @@ export const COMPETITIVE_MODES = ['ffa', 'team'];
 
 /** Server-side defaults for competitive play (tests may override with configureModes). */
 export const MODE_CONFIG = {
-  /** Whole match length; at expiry the match ends with reason "timeout". */
-  matchDurationMs: 10 * 60 * 1000,
+  /** Optional duration override for harnesses; production uses each stage's configured minutes. */
+  matchDurationMs: null,
   /** A player disconnected this long during play counts as quit; a scope with every member quit forfeits. */
   disconnectGraceMs: 60 * 1000,
+  /** Shared briefing before every match; nobody can move, use a terminal or items, and items do not spawn until it ends. */
+  briefingMs: 8 * 1000,
   /**
    * Team assignment: joiners are auto-balanced (fewer members, T1 on ties) and may switch with lobby:team.
    * In the lobby a team may briefly hold teamSize + 1 so players can swap; starting requires exactly teamSize each.
@@ -90,6 +92,17 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
   };
   const scopeOf = (room, player) => room.match?.scopes[player.teamId] || null;
   const teamMembers = (room, teamId) => SEATS.filter((s) => room.seats[s]?.teamId === teamId);
+  const syncTeamColors = (room) => {
+    const used = new Set();
+    for (const teamId of TEAMS) {
+      const members = players(room).filter((p) => p.teamId === teamId);
+      if (!members.length) continue;
+      const existing = members.find((p) => PLAYER_COLORS.some((color) => color.id === p.colorId))?.colorId;
+      const colorId = (existing && !used.has(existing) ? existing : PLAYER_COLORS.find((color) => !used.has(color.id))?.id) || null;
+      members.forEach((p) => { p.colorId = colorId; });
+      if (colorId) used.add(colorId);
+    }
+  };
 
   // Each team spawns one member per side so both teams start symmetrically.
   const sideOf = (room, player) => {
@@ -116,6 +129,7 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
 
   const publicPlayer = (p) => (p ? {
     seat: p.seat, teamId: p.teamId, name: p.name, charId: p.charId, ready: p.ready, connected: p.connected, quit: Boolean(p.quit),
+    colorId: p.colorId || null, colorName: playerColor(p.colorId)?.nameEn || null, colorLocalName: playerColor(p.colorId)?.name || null, colorHex: playerColor(p.colorId)?.hex || null,
     roomSide: p.roomSide, station: p.station, x: p.x, y: p.y, facing: p.facing, direction: p.direction, moving: p.moving, terminal: p.terminal,
   } : null);
   const publicPlayers = (room) => Object.fromEntries(SEATS.map((s) => [s, publicPlayer(room.seats[s])]));
@@ -125,6 +139,8 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
     if (!m) return null;
     return {
       stageId: m.stageId,
+      briefingAt: m.briefingAt,
+      startsAt: m.startsAt,
       startedAt: m.startedAt,
       endsAt: m.endsAt,
       endedAt: m.endedAt,
@@ -243,6 +259,7 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
       sendTo(room, row.members, 'stage:complete', { stageId: m.stageId, result, rank: row.rank, reason });
     }
     const winner = m.results[0];
+    if (reason === 'timeout') io.to(room.code).emit('game:over', { stageId: m.stageId, mode: room.mode });
     const label = room.mode === 'team' ? `ทีม ${winner.teamId}` : room.seats[winner.members[0]]?.name;
     const why = { winner: 'ทำด่านสำเร็จก่อน', timeout: 'หมดเวลา', forfeit: 'คู่แข่งถอนตัว' }[reason] || reason;
     system(room, `การแข่งขันจบ (${why}) — อันดับ 1: ${label}`);
@@ -272,6 +289,134 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
     endMatch(room, 'winner');
   };
 
+  const beginMatch = (room, id) => {
+    const all = players(room);
+    // One new scenario per stage entry, shared across scopes for a fair match.
+    const previousFingerprint = room.lastScenarioFingerprints?.get(id) || null;
+    const freshRun = startFreshRun(id, { sample: room.options.sample, previousFingerprint });
+    const seed = freshRun.seed;
+    room.lastScenarioFingerprints ||= new Map();
+    room.lastScenarioFingerprints.set(id, scenarioFingerprint(freshRun));
+    // Everyone gets the same briefing, then the server starts the clock for all at once.
+    const now = Date.now();
+    const briefingMs = Math.max(0, Number(MODE_CONFIG.briefingMs) || 0);
+    const startsAt = now + briefingMs;
+    const scopes = {};
+    for (const p of all) {
+      scopes[p.teamId] ||= { id: p.teamId, teamId: p.teamId, members: [], run: null, finishedAt: null, forfeited: false };
+      scopes[p.teamId].members.push(p.seat);
+    }
+    for (const scope of Object.values(scopes)) {
+      scope.run = startRun(id, { sample: room.options.sample, seed });
+      scope.run.startedAt = startsAt;
+      rememberInitialConfig(scope.run);
+    }
+    const durationMs = Number(MODE_CONFIG.matchDurationMs) > 0 ? Number(MODE_CONFIG.matchDurationMs) : (scopes[Object.keys(scopes)[0]].run.stage.minutes * 60_000);
+    room.match?.items?.stop();
+    room.match = { stageId: id, seed, briefingAt: now, startsAt, startedAt: startsAt, durationMs, endsAt: startsAt + durationMs, endedAt: null, endedReason: null, scopes, results: null, level: levelForStage(id), quitVotes: new Set(), retryVotes: new Set() };
+    room.match.items = createMatchItems({
+      room,
+      sendTo: (seats, event, payload) => sendTo(room, seats, event, payload),
+      broadcast: (event, payload) => io.to(room.code).emit(event, payload),
+      onScopeChanged: (scope) => { emitState(room); emitScopeViews(room, scope); },
+    });
+    clearTimeout(room.matchTimer);
+    room.matchTimer = setTimeout(() => endMatch(room, 'timeout'), briefingMs + durationMs);
+    room.matchTimer.unref?.();
+    clearTimeout(room.goTimer);
+    room.goTimer = setTimeout(() => {
+      if (room.phase !== 'play' || room.match?.startsAt !== startsAt) return;
+      io.to(room.code).emit('match:go', { stageId: id, startsAt, endsAt: room.match.endsAt, now: Date.now() });
+      emitState(room);
+    }, briefingMs);
+    room.goTimer.unref?.();
+    for (const p of all) {
+      p.quit = false;
+      p.station = null;
+      p.terminal = false;
+      p.roomSide = sideOf(room, p);
+      // A retry vote can start a match while someone is offline: they get the usual grace period.
+      if (!p.connected) startGrace(room, p);
+    }
+    placeSpawns(room, id);
+    room.phase = 'play';
+    const title = Object.values(scopes)[0].run.stage.title;
+    system(room, `เริ่ม${room.mode === 'team' ? 'การแข่งขันทีม 2v2' : ' FFA'} ด่าน ${id}: ${title} — โจทย์เดียวกัน ระบบจำลองแยกตาม${room.mode === 'team' ? 'ทีม' : 'ผู้เล่น'}`);
+    io.to(room.code).emit('match:start', { stageId: id, briefingAt: now, startsAt, startedAt: startsAt, endsAt: room.match.endsAt, now, scopes: publicMatch(room).scopes });
+    emitState(room);
+    for (const p of all) io.to(p.socketId).emit('stage:view', roleView(scopes[p.teamId].run, 'A'));
+    room.match.items.pushState();
+    return { ok: true };
+  };
+
+  // ---- Votes (retry after timeout / leave the stage) -------------------------------------
+  // Eligible voters are the players still taking part: connected and not quit/forfeited.
+  // Disconnected players neither block nor count; if they reconnect before the vote
+  // completes they become eligible again and must vote too. Votes of players who drop
+  // out are discarded, and every membership change re-settles the pending votes.
+  const voters = (room) => players(room).filter((p) => p.connected && !p.quit).map((p) => p.seat);
+  const voteSet = (room, kind) => (kind === 'retry' ? room.match?.retryVotes : room.match?.quitVotes);
+  const voteStatus = (room, kind) => {
+    const eligible = voters(room);
+    const votes = voteSet(room, kind);
+    const count = eligible.filter((s) => votes?.has(s)).length;
+    return { ok: true, waiting: true, count, total: eligible.length };
+  };
+
+  const finishQuitVote = (room) => {
+    const total = voters(room).length;
+    room.match.items?.stop();
+    clearTimeout(room.matchTimer);
+    clearTimeout(room.goTimer);
+    room.phase = 'select';
+    for (const p of players(room)) {
+      p.quit = false;
+      p.terminal = false;
+      p.station = null;
+      clearTimeout(p.graceTimer);
+    }
+    io.to(room.code).emit('stage:quit:vote', { count: total, total, complete: true });
+    system(room, 'ผู้เล่นครบแล้ว — กลับไปหน้าเลือกด่าน');
+    emitState(room);
+    return { ok: true, waiting: false, count: total, total };
+  };
+
+  /** Completes `kind` (or both) when every eligible voter agreed; returns the ack payload if it fired. */
+  const settleVotes = (room, only = null) => {
+    if (!room.match) return null;
+    const eligible = voters(room);
+    for (const kind of only ? [only] : ['retry', 'quit']) {
+      const votes = voteSet(room, kind);
+      if (!votes) continue;
+      for (const seat of [...votes]) if (!eligible.includes(seat)) votes.delete(seat);
+      const validPhase = kind === 'retry' ? room.phase === 'ended' && room.match.endedReason === 'timeout' : ['play', 'ended'].includes(room.phase);
+      if (!validPhase) continue;
+      if (!votes.size && !only) continue;
+      if (!eligible.length || !eligible.every((seat) => votes.has(seat))) {
+        if (votes.size || only) io.to(room.code).emit(`stage:${kind}:vote`, { count: votes.size, total: eligible.length });
+        continue;
+      }
+      if (kind === 'quit') return finishQuitVote(room);
+      io.to(room.code).emit('stage:retry:vote', { count: eligible.length, total: eligible.length, complete: true });
+      return beginMatch(room, room.match.stageId);
+    }
+    return null;
+  };
+
+  /** During play, a disconnected player has `disconnectGraceMs` to come back before counting as quit. */
+  const startGrace = (room, p) => {
+    clearTimeout(p.graceTimer);
+    p.graceTimer = setTimeout(() => {
+      if (p.connected || room.phase !== 'play') return;
+      p.quit = true;
+      system(room, `${p.name} หลุดนานเกินกำหนด — ถือว่าถอนตัว`);
+      checkForfeits(room);
+      settleVotes(room);
+      emitState(room);
+    }, MODE_CONFIG.disconnectGraceMs);
+    p.graceTimer.unref?.();
+  };
+
   const join = (socket, room, player) => {
     bindSocket(socket, room, player);
     clearTimeout(player.graceTimer);
@@ -288,6 +433,14 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
   const newPlayer = (room, seat, playerId, name, charId) => {
     const p = { id: playerId, seat, name, charId, ready: false, connected: true, quit: false, station: null, terminal: false };
     p.teamId = room.mode === 'team' ? balancedTeam(room) : seat;
+    if (room.mode === 'ffa' || room.mode === 'team') {
+      const teammates = players(room).filter((player) => player.teamId === p.teamId);
+      const teamColor = room.mode === 'team' ? teammates.find((player) => player.colorId)?.colorId : null;
+      const takenColors = new Set(players(room)
+        .filter((player) => room.mode === 'ffa' || player.teamId !== p.teamId)
+        .map((player) => player.colorId));
+      p.colorId = teamColor || PLAYER_COLORS.find((color) => !takenColors.has(color.id))?.id || null;
+    }
     room.seats[seat] = p;
     p.roomSide = sideOf(room, p);
     Object.assign(p, spawnPlayer(room.match?.stageId || 1, p.roomSide));
@@ -304,6 +457,8 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
     const scope = scopeOf(room, player);
     if (player.quit || scope.forfeited) return { error: 'คุณถอนตัวจากการแข่งขันนี้แล้ว' };
     if (scope.finishedAt) return { error: 'ทำด่านนี้สำเร็จแล้ว' };
+    const wait = room.match.startsAt - Date.now();
+    if (wait > 0) return { error: `รอสัญญาณเริ่มพร้อมกัน — อีก ${Math.ceil(wait / 1000)} วินาที`, briefing: true };
     return { player, scope };
   };
 
@@ -378,7 +533,7 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
         p.quit = true;
         system(room, `${p.name} ออกจากการแข่งขัน`);
         checkForfeits(room);
-        emitState(room);
+        if (!settleVotes(room)) emitState(room);
         return;
       }
       room.seats[seat] = null;
@@ -397,6 +552,24 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
       if (!seat || room.phase !== 'lobby' || !characters.includes(payload?.charId)) return;
       room.seats[seat].charId = payload.charId;
       emitState(room);
+    },
+
+    color(socket, payload, room, ack) {
+      const seat = seatOfSocket(room, socket);
+      if (!seat || !COMPETITIVE_MODES.includes(room.mode)) return ack?.({ ok: false, error: 'เลือกสีได้เฉพาะโหมดแข่งขัน' });
+      if (room.phase !== 'lobby') return ack?.({ ok: false, error: 'เปลี่ยนสีได้เฉพาะก่อนเริ่มการแข่งขัน' });
+      if (room.seats[seat].ready) return ack?.({ ok: false, error: 'ยกเลิกสถานะพร้อมก่อนเปลี่ยนสี' });
+      const selected = playerColor(payload?.colorId);
+      if (!selected) return ack?.({ ok: false, error: 'ไม่มีสีนี้ให้เลือก' });
+      const own = room.seats[seat];
+      const takenBy = players(room).find((player) => player.seat !== seat
+        && (room.mode === 'ffa' || player.teamId !== own.teamId)
+        && player.colorId === selected.id);
+      if (takenBy) return ack?.({ ok: false, error: `สี${selected.name}ถูกผู้เล่น ${takenBy.seat} เลือกแล้ว` });
+      if (room.mode === 'team') players(room).filter((player) => player.teamId === own.teamId).forEach((player) => { player.colorId = selected.id; });
+      else own.colorId = selected.id;
+      emitState(room);
+      return ack?.({ ok: true, colorId: selected.id });
     },
 
     ready(socket, payload, room) {
@@ -418,6 +591,7 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
       if (p.teamId !== teamId && teamMembers(room, teamId).length >= MODE_CONFIG.teamSize + 1) return ack?.({ ok: false, error: `ทีม ${teamId} เต็มแล้ว` });
       p.teamId = teamId;
       for (const other of players(room)) { other.ready = false; other.roomSide = sideOf(room, other); }
+      syncTeamColors(room);
       emitState(room);
       return ack?.({ ok: true, teamId });
     },
@@ -435,67 +609,32 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
     stageStart(socket, payload, ack, room) {
       if (!seatOfSocket(room, socket)) return ack?.({ ok: false });
       if (room.phase !== 'select' && room.phase !== 'ended') return ack?.({ ok: false, error: 'กำลังแข่งขันอยู่' });
+      if (room.phase === 'ended' && room.match?.endedReason === 'timeout') return ack?.({ ok: false, error: 'ผู้เล่นทุกคนต้องยืนยันเริ่มด่านนี้ใหม่ก่อน' });
       const all = players(room);
       if (all.length < SEATS.length || !all.every((p) => p.connected)) return ack?.({ ok: false, error: 'ต้องมีผู้เล่นออนไลน์ครบ 4 คน' });
       const id = Number(payload?.stageId);
       if (!Number.isInteger(id) || id < 1 || id > unlockedUpTo(room)) return ack?.({ ok: false, error: 'ด่านนี้ยังล็อกอยู่' });
-      // One seed for every scope: identical puzzle and starting conditions, independent state.
-      const seed = randomInt(1, 2 ** 31);
-      const now = Date.now();
-      const scopes = {};
-      for (const p of all) {
-        scopes[p.teamId] ||= { id: p.teamId, teamId: p.teamId, members: [], run: null, finishedAt: null, forfeited: false };
-        scopes[p.teamId].members.push(p.seat);
-      }
-      for (const scope of Object.values(scopes)) {
-        scope.run = startRun(id, { sample: room.options.sample, seed });
-        scope.run.startedAt = now;
-        rememberInitialConfig(scope.run);
-      }
-      room.match?.items?.stop();
-      room.match = { stageId: id, seed, startedAt: now, endsAt: now + MODE_CONFIG.matchDurationMs, endedAt: null, endedReason: null, scopes, results: null, level: levelForStage(id) };
-      room.match.items = createMatchItems({
-        room,
-        sendTo: (seats, event, payload) => sendTo(room, seats, event, payload),
-        broadcast: (event, payload) => io.to(room.code).emit(event, payload),
-        onScopeChanged: (scope) => { emitState(room); emitScopeViews(room, scope); },
-      });
-      clearTimeout(room.matchTimer);
-      room.matchTimer = setTimeout(() => endMatch(room, 'timeout'), MODE_CONFIG.matchDurationMs);
-      room.matchTimer.unref?.();
-      for (const p of all) {
-        p.quit = false;
-        p.station = null;
-        p.roomSide = sideOf(room, p);
-      }
-      placeSpawns(room, id);
-      room.phase = 'play';
-      const title = Object.values(scopes)[0].run.stage.title;
-      system(room, `เริ่ม${room.mode === 'team' ? 'การแข่งขันทีม 2v2' : ' FFA'} ด่าน ${id}: ${title} — โจทย์เดียวกัน ระบบจำลองแยกตาม${room.mode === 'team' ? 'ทีม' : 'ผู้เล่น'}`);
-      io.to(room.code).emit('match:start', { stageId: id, startedAt: now, endsAt: room.match.endsAt, scopes: publicMatch(room).scopes });
-      emitState(room);
-      // Preview of side A so the mission panel can render before the player reaches a computer.
-      for (const p of all) io.to(p.socketId).emit('stage:view', roleView(scopes[p.teamId].run, 'A'));
-      room.match.items.pushState();
-      return ack?.({ ok: true });
+      return ack?.(beginMatch(room, id));
     },
 
-    stageQuit(socket, room) {
+    stageRetry(socket, ack, room) {
       const seat = seatOfSocket(room, socket);
-      if (!seat) return;
-      if (room.phase === 'ended') {
-        room.phase = 'select';
-        emitState(room);
-        return;
-      }
-      if (room.phase !== 'play') return;
-      const p = room.seats[seat];
-      p.quit = true;
-      p.terminal = false;
-      p.station = null;
-      if (room.mode === 'team') teamSystem(room, p.teamId, `${p.name} ถอนตัว`);
-      checkForfeits(room);
-      emitState(room);
+      const match = room.match;
+      if (!seat || room.phase !== 'ended' || match?.endedReason !== 'timeout') return ack?.({ ok: false, error: 'ไม่มีด่านหมดเวลาที่รอเริ่มใหม่' });
+      if (!voters(room).includes(seat)) return ack?.({ ok: false, error: 'คุณถอนตัวจากการแข่งขันนี้แล้ว จึงโหวตไม่ได้' });
+      match.retryVotes.add(seat);
+      return ack?.(settleVotes(room, 'retry') || voteStatus(room, 'retry'));
+    },
+
+    stageQuit(socket, room, ack) {
+      const seat = seatOfSocket(room, socket);
+      if (!seat) return ack?.({ ok: false, error: 'ไม่พบผู้เล่นในห้องนี้' });
+      if (!['play', 'ended'].includes(room.phase) || !room.match) return ack?.({ ok: false, error: 'ตอนนี้ไม่ได้อยู่ในด่าน' });
+      if (!voters(room).includes(seat)) return ack?.({ ok: false, error: 'คุณถอนตัวจากการแข่งขันนี้แล้ว จึงโหวตไม่ได้' });
+      room.match.quitVotes.add(seat);
+      const done = settleVotes(room, 'quit');
+      if (!done) emitState(room);
+      return ack?.(done || voteStatus(room, 'quit'));
     },
 
     move(socket, payload, room) {
@@ -631,19 +770,10 @@ export function createCompetitive({ io, rooms, clean, characters, system, unlock
       p.input = null;
       p.moving = false;
       if (room.phase === 'lobby') p.ready = false;
-      if (room.phase === 'play' && !p.quit) {
-        clearTimeout(p.graceTimer);
-        p.graceTimer = setTimeout(() => {
-          if (p.connected || room.phase !== 'play') return;
-          p.quit = true;
-          system(room, `${p.name} หลุดนานเกินกำหนด — ถือว่าถอนตัว`);
-          checkForfeits(room);
-          emitState(room);
-        }, MODE_CONFIG.disconnectGraceMs);
-        p.graceTimer.unref?.();
-      }
+      if (room.phase === 'play' && !p.quit) startGrace(room, p);
       system(room, `${p.name} หลุดการเชื่อมต่อ — เข้าห้อง ${room.code} อีกครั้งเพื่อเล่นต่อ`);
-      emitState(room);
+      // The players still here must not wait on a vote from someone who left.
+      if (!settleVotes(room)) emitState(room);
       if (!players(room).some((other) => other.connected)) cleanupLater(room);
     },
   };

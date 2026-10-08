@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CHARACTERS } from '../server/game/rooms.js';
 import { levelForStage, movePlayer, spawnPlayer } from '../public/js/world.js';
+globalThis.Image ||= class Image {};
+const { Diorama } = await import('../public/js/diorama.js');
 
 test('both supplied characters are selectable and have complete four-direction sheets', () => {
   const manifest = JSON.parse(readFileSync(new URL('../public/assets/manifest.json', import.meta.url)));
@@ -34,4 +36,11 @@ test('movement broadcasts the direction needed for the new character', () => {
     assert.equal(moved.moving, true);
     assert.equal(movePlayer(level, 'A', moved, { x: 0, y: 0 }, 0.05).direction, direction);
   }
+});
+
+test('co-op mode keeps the controlled character assigned to the player room', () => {
+  const diorama = Object.create(Diorama.prototype);
+  diorama.setRole('B');
+  diorama.setMode('coop', 'B', 'A');
+  assert.equal(diorama.role, 'B');
 });

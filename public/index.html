@@ -25,40 +25,74 @@
   </section>
 
   <!-- 2) Game mode selection preview -->
-  <section id="screen-mode" class="screen" aria-label="เลือกโหมดเกม">
+  <section id="screen-mode" class="screen" aria-labelledby="mode-title">
     <div class="mode-shell">
+      <div class="mode-topbar">
+        <button type="button" class="mode-back" id="mode-back">← กลับหน้าปก</button>
+      </div>
       <header class="mode-header">
         <span class="mode-kicker">KUHU NET · NETWORK ARENA</span>
-        <h1>เลือกโหมดการเล่น</h1>
-        <p>เลือกสนามแข่งขันของคุณ — ทั้งสองโหมดรองรับผู้เล่น 4 คน</p>
+        <h1 id="mode-title">เลือกโหมดการเล่น</h1>
+        <p class="mode-sub">เลือกวิธีเล่น แล้วสร้างห้องหรือใส่เลขห้องของเพื่อนในขั้นถัดไป</p>
       </header>
-      <div class="mode-grid">
-        <button class="mode-card mode-ffa" data-mode-card="ffa" aria-pressed="false">
-          <span class="mode-number">01</span>
-          <span class="mode-art ffa-art" aria-hidden="true"><i>1</i><i>2</i><i>3</i><i>4</i></span>
-          <span class="mode-tag">แข่งขันเดี่ยว</span>
-          <strong>FREE FOR ALL</strong>
-          <span class="mode-subtitle">4 คน · ใครไวคนนั้นชนะ</span>
-          <span class="mode-copy">ทุกคนแก้โจทย์เดียวกัน แข่งทำภารกิจให้สำเร็จก่อน พร้อมดูความคืบหน้าของคู่แข่ง</span>
-          <span class="mode-status active-mode"><i></i> เปิดให้เล่นแล้ว</span>
-        </button>
-        <button class="mode-card mode-team" data-mode-card="team" aria-pressed="false">
-          <span class="mode-number">02</span>
-          <span class="mode-art team-art" aria-hidden="true"><i>A1</i><i>A2</i><b>VS</b><i>B1</i><i>B2</i></span>
-          <span class="mode-tag">ประสานทีม</span>
-          <strong>TEAM BATTLE</strong>
-          <span class="mode-subtitle">2 vs 2 · ร่วมมือเพื่อชัยชนะ</span>
-          <span class="mode-copy">ช่วยกันแก้ระบบในทีม มองเห็นสถานะของทั้งสองทีม แล้วชิงทำเป้าหมายให้สำเร็จ</span>
-          <span class="mode-status active-mode"><i></i> เปิดให้เล่นแล้ว</span>
-        </button>
-      </div>
-      <div class="mode-footer">
-        <span id="mode-detail" aria-live="polite">เลือกการ์ดเพื่อดูรายละเอียดโหมด</span>
-        <button class="btn ghost" id="mode-back">← กลับหน้าปก</button>
-        <button class="btn teal big" id="mode-ffa">เล่น Free for All</button>
-        <button class="btn yellow big" id="mode-team">เล่นทีม 2v2</button>
-        <button class="btn green big" id="mode-coop">เล่นโหมดร่วมมือเดิม · 2 คน</button>
-      </div>
+      <ul class="mode-grid" role="list">
+        <li class="mode-card" data-mode="coop">
+          <div class="mode-hero">
+            <span class="mode-badge">2 ผู้เล่น</span>
+            <div class="mode-art art-coop" aria-hidden="true">
+              <span class="px-person"></span><span class="px-wall"></span><span class="px-person"></span>
+            </div>
+          </div>
+          <div class="mode-body">
+            <p class="mode-en">CO-OP</p>
+            <h2 class="mode-name" id="mode-name-coop">ร่วมมือ 2 คน</h2>
+            <p class="mode-copy">อยู่คนละห้อง แลกข้อมูลและช่วยกันแก้ปริศนา</p>
+            <button type="button" class="btn mode-play" data-mode-play="coop" aria-describedby="mode-name-coop"><span>เล่นร่วมมือ</span><span class="mode-play-arrow" aria-hidden="true">▶</span></button>
+          </div>
+        </li>
+        <li class="mode-card" data-mode="ffa">
+          <div class="mode-hero">
+            <span class="mode-badge">4 ผู้เล่น</span>
+            <div class="mode-art art-ffa" aria-hidden="true">
+              <span class="px-person"></span><span class="px-person"></span><span class="px-person"></span><span class="px-person"></span>
+            </div>
+          </div>
+          <div class="mode-body">
+            <p class="mode-en">FREE FOR ALL</p>
+            <h2 class="mode-name" id="mode-name-ffa">แข่งขันเดี่ยว 4 คน</h2>
+            <p class="mode-copy">ต่างคนต่างแก้โจทย์เดียวกัน ใครสำเร็จก่อนชนะ ใช้ไอเทมก่อกวนคู่แข่งได้</p>
+            <button type="button" class="btn mode-play" data-mode-play="ffa" aria-describedby="mode-name-ffa"><span>เล่นแข่งขันเดี่ยว</span><span class="mode-play-arrow" aria-hidden="true">▶</span></button>
+          </div>
+        </li>
+        <li class="mode-card" data-mode="team">
+          <div class="mode-hero">
+            <span class="mode-badge">4 ผู้เล่น · 2 ทีม</span>
+            <div class="mode-art art-team" aria-hidden="true">
+              <span class="px-person"></span><span class="px-person"></span><b class="px-vs">VS</b><span class="px-person"></span><span class="px-person"></span>
+            </div>
+          </div>
+          <div class="mode-body">
+            <p class="mode-en">TEAM BATTLE</p>
+            <h2 class="mode-name" id="mode-name-team">แข่งขันทีม 2v2</h2>
+            <p class="mode-copy">ทีมละ 2 คน ช่วยกันแก้โจทย์ แข่งกับอีกทีม ใช้ไอเทมโจมตีทีมตรงข้ามได้</p>
+            <button type="button" class="btn mode-play" data-mode-play="team" aria-describedby="mode-name-team"><span>เล่นแข่งขันทีม</span><span class="mode-play-arrow" aria-hidden="true">▶</span></button>
+          </div>
+        </li>
+        <li class="mode-card" data-mode="solo">
+          <div class="mode-hero">
+            <span class="mode-badge">1 ผู้เล่น</span>
+            <div class="mode-art art-solo" aria-hidden="true">
+              <span class="px-desk">A</span><span class="px-person"></span><span class="px-desk">B</span>
+            </div>
+          </div>
+          <div class="mode-body">
+            <p class="mode-en">SOLO PRACTICE</p>
+            <h2 class="mode-name" id="mode-name-solo">ฝึกเล่นคนเดียว</h2>
+            <p class="mode-copy">สำรวจทั้งสองห้อง ฝึกแก้โจทย์ด้วยตัวเอง ไม่จำกัดเวลา</p>
+            <button type="button" class="btn mode-play" data-mode-play="solo" aria-describedby="mode-name-solo"><span>เริ่มฝึก</span><span class="mode-play-arrow" aria-hidden="true">▶</span></button>
+          </div>
+        </li>
+      </ul>
     </div>
   </section>
 
@@ -81,13 +115,13 @@
       </label>
       <div class="lobby-grid">
         <div class="lobby-card">
-          <h3>สร้างห้องใหม่</h3>
-          <p>ระบบจะสุ่มเลขห้อง 4 หลักให้ ส่งเลขนี้ให้เพื่อนเพื่อเข้าร่วม</p>
+          <h3 id="lobby-create-title">สร้างห้องใหม่</h3>
+          <p id="lobby-create-copy">ระบบจะสุ่มเลขห้อง 4 หลักให้ ส่งเลขนี้ให้เพื่อนเพื่อเข้าร่วม</p>
           <label class="check"><input type="checkbox" id="opt-sample"> ใช้ข้อมูลตัวอย่างตามเอกสาร (ไม่สุ่มค่า)</label>
           <label class="check"><input type="checkbox" id="opt-unlock"> ปลดล็อกทุกด่าน (โหมดสาธิต)</label>
           <button class="btn green big" id="btn-create">สร้างห้อง</button>
         </div>
-        <div class="lobby-card">
+        <div class="lobby-card lobby-join-card">
           <h3>ใส่เลขห้อง</h3>
           <p>ใส่เลขห้องที่เพื่อนสร้างไว้</p>
           <div class="code-input" id="code-input">
@@ -243,6 +277,9 @@
           <div class="side-card hud-clock">
             <span class="hud-timer" title="เวลาที่ใช้ / เวลาแนะนำ"><b id="tb-timer">00:00</b> <small id="tb-limit">/ 03:00</small></span>
             <button class="hud-icon" id="tb-sound" title="เปิด/ปิดเสียง" aria-label="เปิดปิดเสียง"></button>
+            <aside class="voice-widget hidden" id="voice-widget" aria-label="แชทเสียง">
+              <button class="hud-icon voice-mic" id="voice-mic" type="button" aria-label="เปิดไมค์" aria-pressed="false" title="เปิดไมค์"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg></button>
+            </aside>
             <button class="hud-icon" id="tb-settings" title="ตั้งค่า" aria-label="ตั้งค่า"><img src="/assets/ui/menu.png" alt=""></button>
           </div>
 
@@ -433,6 +470,25 @@
       </div>
     </div>
   </div>
+
+  <section class="story-scene hidden" id="story-briefing" aria-label="ฉากบรีฟเนื้อเรื่อง">
+    <div class="story-scene-head"><span id="story-kicker">INCOMING TRANSMISSION</span><b id="story-title"></b></div>
+    <div class="story-cast" aria-hidden="true">
+      <div class="story-actor" id="story-actor-one"><div class="story-avatar" id="story-avatar-one"></div><b id="story-name-one">ผู้ดูแลระบบ A</b></div>
+      <div class="story-transmission">● REC</div>
+      <div class="story-actor" id="story-actor-two"><div class="story-avatar" id="story-avatar-two"></div><b id="story-name-two">ผู้ดูแลระบบ B</b></div>
+    </div>
+    <div class="story-dialogue" role="status" aria-live="polite">
+      <div class="story-speaker" id="story-speaker"></div>
+      <p id="story-line"></p>
+      <div class="story-objective"><b>แนวทางภารกิจ:</b> <span id="story-objective-text"></span></div>
+      <div class="story-progress"><span id="story-progress"></span></div>
+    </div>
+    <button class="story-dismiss" id="story-dismiss" type="button">ข้ามฉาก ›</button>
+    <small class="story-limit">ฉากบรีฟไม่เกิน 30 วินาที · กด Enter เพื่อข้าม</small>
+  </section>
+
+  <div id="voice-audio-host" class="voice-audio-host" aria-hidden="true"></div>
 
   <div class="toast" id="toast" role="status"></div>
   <canvas id="confetti" aria-hidden="true"></canvas>
